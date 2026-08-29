@@ -1,0 +1,116 @@
+# bb-verify — verify-runner CI workflow（Phase 2 物料；人工闸门：提交进
+# DangoSys/buckyball 的 .github/workflows/bb-verify.yml，方案 B 则提交进 fork 同路径）。
+#
+# 本文件是机器相关的（self-hosted runner 就是这台机器，详见 ci/runner-setup.md）：
+#   - /home/ROXY/code/deepseek-harness   — dsh harness 本机检出（pnpm dsh, v0.1.1-rc.2）
+#   - /home/ROXY/code/bb_work/dsh-plugin — dsh-plugin 本机检出；workflow 从该路径把
+#     verify-runner 复制进 runner.temp 再构建（本机分支领先 origin 且 Phase 2 物料
+#     尚未提交，git clone 远程拿不到当前工作区状态，故不用远程 clone）。
+#   - bbdev 不在宿主 PATH 上：verify-runner 按 §11 三级解析回退 `nix develop -c bbdev`
+#     （cwd=repoPath），只需 nix/gh/pnpm/node 可达 —— runner service 的 PATH 很小，
+#     由下方 Fix PATH 步骤补齐。
+#   - 安全纪律：全文件无任何明文 key。LLM key 只经 repo secret OPENCODE_API_KEY
+#     注入（Run verify-runner 步骤 env）；provider 配置用 apiKeyEnv 引用同名环境变量
+#     （见 ci/settings.ci.yaml）。
+
+name: bb-verify
+
+on:
+  workflow_dispatch:            # 路线图 ②：最小实现先手动触发（《探索文档》§12）
+    inputs:
+      pr_number: { required: true, type: number }
+  # pull_request:               # 路线图 ③：Phase 3 跑绿后启用（启用前整段注释）
+  #   types: [opened, synchronize]
+
+jobs:
+  verify:
+    runs-on: cpu-server         # self-hosted label：nix 环境与 bbdev 都在这台机器上
+    steps:
+      - uses: actions/checkout@v4
+
+      # runner service 的 systemd PATH 很小（不含 nix/pnpm/node 所在目录，
+      # 本机实测：nix=/nix/var/nix/profiles/default/bin，pnpm/node=/home/ROXY/.local/bin）。
+      # GITHUB_PATH 只对后续步骤生效，故必须是第一步。
+      - name: Fix PATH for the runner service
+        run: |
+          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+          echo "/home/ROXY/.local/bin"             >> "$GITHUB_PATH"
+
+      - name: Check toolchain, local prerequisites and secret
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}   # 仅做非空检查，绝不回显
+        run: |
+          set -euo pipefail
+          for tool in nix gh pnpm node; do
+            command -v "$tool" >/dev/null || { echo "::error::$tool not on PATH"; exit 1; }
+          done
+          for path in \
+            /home/ROXY/code/deepseek-harness \
+            /home/ROXY/code/bb_work/dsh-plugin/verify-runner/ci/settings.ci.yaml ; do
+            [ -e "$path" ] || { echo "::error::missing local path: $path"; exit 1; }
+          done
+          [ -n "$OPENCODE_API_KEY" ] || {
+            echo "::error::repo secret OPENCODE_API_KEY 未配置（人工闸门 ②）"; exit 1; }
+
+      - name: Resolve PR context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ inputs.pr_number || github.event.pull_request.number }}
+          gh pr view "$PR" --repo DangoSys/buckyball --json title,body,files > pr-context.json
+          { echo "验证 PR #$PR。PR 上下文（含描述中的证据清单）如下："; \
+            cat pr-context.json; } > task-prompt.md
+
+      - name: Stage dsh-plugin from the local checkout and build verify-runner
+        run: |
+          set -euo pipefail
+          DSH_PLUGIN_DIR="$RUNNER_TEMP/dsh-plugin"
+          mkdir -p "$DSH_PLUGIN_DIR"
+          # 从本机检出复制（cp 会带上未提交的新文件，这正是 Phase 2 物料所需要的）；
+          # node_modules/lib 一并重装重建，CI 验证的是干净构建。
+          cp -a /home/ROXY/code/bb_work/dsh-plugin/verify-runner "$DSH_PLUGIN_DIR/verify-runner"
+          rm -rf "$DSH_PLUGIN_DIR/verify-runner/node_modules" "$DSH_PLUGIN_DIR/verify-runner/lib"
+          cd "$DSH_PLUGIN_DIR/verify-runner"
+          pnpm install
+          pnpm build
+          echo "DSH_PLUGIN_DIR=$DSH_PLUGIN_DIR" >> "$GITHUB_ENV"
+
+      - name: Prepare a fresh DSH_HOME with the LLM provider settings
+        run: |
+          set -euo pipefail
+          DSH_LOCAL="$RUNNER_TEMP/dsh-home"
+          mkdir -p "$DSH_LOCAL"
+          # Phase 0 教训：CI 的 DSH_HOME 是全新的，没有这份 settings.yaml LLM 解析
+          # 起不来。文件不含 key，key 只经 OPENCODE_API_KEY 环境变量注入。
+          cp "$DSH_PLUGIN_DIR/verify-runner/ci/settings.ci.yaml" "$DSH_LOCAL/settings.yaml"
+          echo "DSH_HOME=$DSH_LOCAL" >> "$GITHUB_ENV"
+
+      - name: Install dsh plugins (headless profile)
+        run: |
+          cd /home/ROXY/code/deepseek-harness
+          pnpm dsh plugin --profile headless add "$DSH_PLUGIN_DIR/verify-runner"
+
+      - name: Write plugin config (repoPath = the buckyball workspace)
+        run: |
+          mkdir -p "$DSH_HOME/profiles/headless"
+          cat > "$DSH_HOME/profiles/headless/cordis.patch.yml" <<EOF
+          - id: tool-verify-runner
+            config:
+              repoPath: $GITHUB_WORKSPACE
+              taskDir:  $RUNNER_TEMP/verify-tasks
+          EOF
+
+      - name: Run verify-runner
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}   # zen go / qwen3.8-flash
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd /home/ROXY/code/deepseek-harness
+          pnpm dsh --profile headless "$(cat "$GITHUB_WORKSPACE/task-prompt.md")"
+
+      - name: Archive session logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-sessions
+          path: ${{ runner.temp }}/dsh-home/sessions
