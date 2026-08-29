@@ -8,6 +8,9 @@
 #define COLUMNS 16
 #define ITER (ROWS * COLUMNS / 4)
 
+/* verify-runner E2E smoke (Phase 3): this ctest only exercises the relu ball —
+ * comment-only change, expected to run unchanged via elf-tests on chip toy. */
+
 static result_t input[ROWS * COLUMNS] __attribute__((aligned(64)));
 static result_t packed_input[ROWS * COLUMNS] __attribute__((aligned(64)));
 static result_t packed_output[ROWS * COLUMNS] __attribute__((aligned(64)));
@@ -40,6 +43,7 @@ int main(void) {
   pack(input, packed_input);
   bb_mem_alloc(bank, 1, 1);
   bb_mvin((uintptr_t)packed_input, bank, ITER, 1);
+  /* relu runs in place on bank 0; see isa/relu.h for the operand layout. */
   bb_relu(bank, 0, ITER, ITER);
   bb_mvout((uintptr_t)packed_output, bank, ITER, 1);
   bb_fence();
