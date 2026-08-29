@@ -1,17 +1,32 @@
-# bb-verify — verify-runner CI workflow（Phase 2 物料；人工闸门：提交进
-# DangoSys/buckyball 的 .github/workflows/bb-verify.yml，方案 B 则提交进 fork 同路径）。
+# bb-verify — verify-runner CI workflow（Phase 3：持久化 CI 工作区模式）
 #
-# 本文件是机器相关的（self-hosted runner 就是这台机器，详见 ci/runner-setup.md）：
+# Phase 3 变更（2026-08-30，对齐上游 .github/workflows/check.yaml 的持久化模式）：
+#   验证本体不再在 runner _work 的临时 checkout 里执行，而是固定使用本机持久化根
+#   /home/ROXY/bb-verify/buckyball（由 ci/bootstrap-persistent-root.sh 一次性
+#   bootstrap：clone + 全量子模块 + nix build + bbdev api venv + bebop spike +
+#   compiler/workload 冷树首构）。理由：
+#   - 本机约束：执行依赖用户目录内已初始化的环境（热 nix store / 热构建树），
+#     runner _work 只做轻量编排（生成 task-prompt、staging 插件、跑 dsh）。
+#   - 上游先例：check.yaml 同样用持久化检出（~/Code/buckyball + ci_repo_lock.sh
+#     prepare）+ 每 run 增量跑 nix build / bbdev config --install / compiler
+#     --build / workload --build / bebop-bemu --batch。本 workflow 的 provision
+#     序列与上游一致，实测热树各步耗时见步骤注释（首次 bootstrap 见脚本头注）。
+#   - 此前 dispatch 的教训：_work 干净 checkout 缺子模块 → bbdev exec 命中空目录
+#     EISDIR/126（run 33263669829 的 FAIL 评论）；以及调试行 `ls result/bin |
+#     head -3` 在 set -euo pipefail 下因 Broken pipe 造成假失败（run
+#     33264657589）。持久化根 + 去掉该调试行后两类问题一并消除。
+#
+# 机器相关（self-hosted runner 就是这台机器，详见 ci/runner-setup.md）：
 #   - /home/ROXY/code/deepseek-harness   — dsh harness 本机检出（pnpm dsh, v0.1.1-rc.2）
 #   - /home/ROXY/code/bb_work/dsh-plugin — dsh-plugin 本机检出；workflow 从该路径把
-#     verify-runner 复制进 runner.temp 再构建（本机分支领先 origin 且 Phase 2 物料
-#     尚未提交，git clone 远程拿不到当前工作区状态，故不用远程 clone）。
-#   - bbdev 不在宿主 PATH 上：verify-runner 按 §11 三级解析回退 `nix develop -c bbdev`
-#     （cwd=repoPath），只需 nix/gh/pnpm/node 可达 —— runner service 的 PATH 很小，
-#     由下方 Fix PATH 步骤补齐。
+#     verify-runner 复制进 runner.temp 再构建（本机分支领先 origin，git clone 远程
+#     拿不到当前工作区状态，故不用远程 clone）。
+#   - bbdev 不在宿主 PATH 上：verify-runner 按 §11 三级解析回退 `nix develop -c
+#     bbdev`（cwd=repoPath=持久化根），只需 nix/gh/pnpm/node 可达 —— runner
+#     service 的 PATH 很小，由 Fix PATH 步骤补齐。
 #   - 安全纪律：全文件无任何明文 key。LLM key 只经 repo secret OPENCODE_API_KEY
-#     注入（Run verify-runner 步骤 env）；provider 配置用 apiKeyEnv 引用同名环境变量
-#     （见 ci/settings.ci.yaml）。
+#     注入（Run verify-runner 步骤 env）；provider 配置用 apiKeyEnv 引用同名环境
+#     变量（见 ci/settings.ci.yaml）。
 
 name: bb-verify
 
@@ -19,13 +34,27 @@ on:
   workflow_dispatch:            # 路线图 ②：最小实现先手动触发（《探索文档》§12）
     inputs:
       pr_number: { required: true, type: number }
-  # pull_request:               # 路线图 ③：Phase 3 跑绿后启用（启用前整段注释）
-  #   types: [opened, synchronize]
+  # pull_request:               # 路线图 ③：Phase 3 已于 2026-08-30 在 PR #1 跑绿
+  #   types: [opened, synchronize]  后启用（启用前整段注释）。注意：self-hosted
+  #                                 runner 对本机有完全访问权，只接本仓库自己的
+  #                                 PR，不接陌生外部 PR（runner-setup.md §4）。
+
+# 持久化根是共享可变状态：同一时刻只允许一个 run 对其做 prepare + 增量构建。
+# concurrency 串行化 + 步骤内 flock 双保险（concurrency 只在 GitHub 侧排队，
+# flock 防的是本机其他入口，如人工调试）。
+concurrency:
+  group: bb-verify-persistent-root
+  cancel-in-progress: false
 
 jobs:
   verify:
     runs-on: cpu-server         # self-hosted label：nix 环境与 bbdev 都在这台机器上
+    env:
+      BB_VERIFY_ROOT: /home/ROXY/bb-verify/buckyball
     steps:
+      # 只为拿到 $GITHUB_WORKSPACE 存放 task-prompt.md / pr-context.json，以及
+      # 后续步骤引用的 runner 侧文件；不再在这里检出 PR 代码/子模块（持久化根
+      # 负责），也不再在这里跑任何构建。
       - uses: actions/checkout@v4
 
       # runner service 的 systemd PATH 很小（不含 nix/pnpm/node 所在目录，
@@ -46,8 +75,15 @@ jobs:
           done
           for path in \
             /home/ROXY/code/deepseek-harness \
-            /home/ROXY/code/bb_work/dsh-plugin/verify-runner/ci/settings.ci.yaml ; do
-            [ -e "$path" ] || { echo "::error::missing local path: $path"; exit 1; }
+            /home/ROXY/code/bb_work/dsh-plugin/verify-runner/ci/settings.ci.yaml \
+            "$BB_VERIFY_ROOT/.git" \
+            "$BB_VERIFY_ROOT/bbdev/api/.venv/bin/motia" \
+            "$BB_VERIFY_ROOT/bebop/src/nodes/bemu/native/spike/configure.ac" ; do
+            [ -e "$path" ] || {
+              echo "::error::missing local path: $path"
+              echo "::error::持久化根未 bootstrap 或一次性产物缺失 —— 在本机跑一次" \
+                   "dsh-plugin/verify-runner/ci/bootstrap-persistent-root.sh"
+              exit 1; }
           done
           [ -n "$OPENCODE_API_KEY" ] || {
             echo "::error::repo secret OPENCODE_API_KEY 未配置（人工闸门 ②）"; exit 1; }
@@ -61,30 +97,70 @@ jobs:
           { echo "验证 PR #$PR。PR 上下文（含描述中的证据清单）如下："; \
             cat pr-context.json; } > task-prompt.md
 
-      # 方案 B：workflow_dispatch 的 actions/checkout@v4 检出的是 fork 默认分支，
-      # 不是 PR 代码；必须在此显式检出 PR head（PR 号按 $GITHUB_REPOSITORY 解析）。
-      # 随后初始化 bbdev 三件套的最小子模块集：bbdev（CLI 本体，sourceme.sh 把
-      # $BB/bbdev 加进 PATH，缺它则 exec 命中空目录 → EISDIR/126）、bebop（bemu 源）。
-      # elf-tests 是 C 测试，无需 buddy-mlir / RTL 类子模块。
-      - name: Check out PR head
+      # 持久化根 prepare（flock + fetch PR ref + detach checkout + 增量 submodule）。
+      # 为什么不复用上游 .github/scripts/ci_repo_lock.sh prepare：
+      #   1) 它的 repo_reset 对主仓 git clean -ffd 且对 bbdev/bebop/buddy-mlir
+      #      reset --hard + clean -ffd —— 会把热树上的全部增量构建产物（buddy-mlir
+      #      build/、bb-tests/workloads/build/、.venv、spike 等 untracked 内容）每次
+      #      清空，持久化预热就被抵消了；本 workflow 的验证路径靠 batch 的
+      #      --clean-before 保证测试产物干净，主仓不整体 clean 是有意的取舍。
+      #   2) 它的锁目录写死 /tmp/buckyball-ci（多用户机器上 /tmp 归属有冲突史），
+      #      且配套 setproxy.sh 是上游的网络假设（ALL_PROXY=127.0.0.1:7890），本机
+      #      不适用。这里用 /home/ROXY/bb-verify 下的 flock 文件，语义等价（prepare
+      #      = 拿锁后独占切换检出）。
+      # 子模块处理（有意的两层设计）：
+      #   a) 根仓 `git submodule update --init`（非递归）——把 18 个一级子模块对齐
+      #      到 PR head 记录的指针；树在 bootstrap 时已全量 init，这里全是秒级
+      #      no-op。不用 --recursive 的原因：会递归进 buddy-mlir 的嵌套子模块
+      #      riscv-gnu-toolchain/tt-mlir（各数 GB，验证路径完全用不到——compiler
+      #      构建脚本只引用 llvm），每次 run 都发起大 clone 既慢又是网络单点。
+      #   b) buddy-mlir 的嵌套 llvm 子模块单独守卫：compiler 构建硬依赖
+      #      llvm/llvm 源码；bootstrap 时已按 pinned commit 装好，这里只在缺失时
+      #      才补（shallow fetch by sha，见 bootstrap 脚本）。
+      # 检出后校验 HEAD == PR head sha，防止 race（PR 被 force-push 等）。
+      - name: Prepare persistent repo (flock + PR head + incremental submodules)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           PR=${{ inputs.pr_number || github.event.pull_request.number }}
-          gh pr checkout "$PR" --repo "$GITHUB_REPOSITORY"
-          git log --oneline -1
-          git submodule update --init bbdev bebop
-          git submodule status bbdev bebop
+          WANT_SHA=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+          mkdir -p /home/ROXY/bb-verify
+          exec 9>/home/ROXY/bb-verify/bb-verify.lock
+          flock 9
+          git -C "$BB_VERIFY_ROOT" fetch --force origin "refs/pull/${PR}/head"
+          git -C "$BB_VERIFY_ROOT" checkout --detach --force FETCH_HEAD
+          git -C "$BB_VERIFY_ROOT" submodule update --init
+          if [ ! -f "$BB_VERIFY_ROOT/compiler/thirdparty/buddy-mlir/llvm/llvm/CMakeLists.txt" ]; then
+            git -C "$BB_VERIFY_ROOT/compiler/thirdparty/buddy-mlir" submodule update --init llvm
+          fi
+          HAVE_SHA=$(git -C "$BB_VERIFY_ROOT" rev-parse HEAD)
+          flock -u 9
+          if [ "$HAVE_SHA" != "$WANT_SHA" ]; then
+            echo "::error::persistent root at ${HAVE_SHA:0:8}, expected PR head ${WANT_SHA:0:8}"
+            exit 1
+          fi
+          echo "persistent root at $(git -C "$BB_VERIFY_ROOT" log --oneline -1)"
 
-      # 官方 CI 顺序（.github/workflows/test.yml）：nix build 产生 ./result（riscv-gcc、
-      # verilator 等工具链所在）；干净 checkout 缺它则 devShell 内所有工具 not found。
-      # nix store 在本机已热，实测 <10s。
-      - name: Provision toolchain (nix build)
+      # 每 run 的 provision 序列（= 上游 check.yaml 的 chip-check 顺序，全部在持久
+      # 化根内增量执行；2026-08-30 持久化根实测：nix build 4.5s、config --install
+      # 15s；compiler/workload 冷树首构耗时见 bootstrap 脚本头注，热树增量远快）。
+      # 注意不放 `ls result/bin | head -3` 之类调试行 —— pipefail 下 head 提前关闭
+      # 管道会让 ls 以 EPIPE 退出造成假失败（run 33264657589 教训）。
+      - name: Provision persistent root (nix build + bbdev config/compiler/workload)
         run: |
           set -euo pipefail
-          nix build
-          ls result/bin | head -3
+          cd "$BB_VERIFY_ROOT"
+          echo "::group::nix build"; time nix build; echo "::endgroup::"
+          echo "::group::bbdev config --install"
+          time nix develop -c bbdev config --install
+          echo "::endgroup::"
+          echo "::group::bbdev compiler --build (incremental)"
+          time nix develop -c bbdev compiler --build '--chip toy'
+          echo "::endgroup::"
+          echo "::group::bbdev workload --build (incremental)"
+          time nix develop -c bbdev workload --build '--chip toy'
+          echo "::endgroup::"
 
       - name: Stage dsh-plugin from the local checkout and build verify-runner
         run: |
@@ -115,13 +191,15 @@ jobs:
           cd /home/ROXY/code/deepseek-harness
           pnpm dsh plugin --profile headless add "$DSH_PLUGIN_DIR/verify-runner"
 
-      - name: Write plugin config (repoPath = the buckyball workspace)
+      - name: Write plugin config (repoPath = the persistent buckyball root)
         run: |
           mkdir -p "$DSH_HOME/profiles/headless"
+          # repoPath 指向持久化根（已 prepare 到 PR head 并完成 provision）——
+          # verify-runner 的 bbdev 三件套都以它为 cwd 解析（nix develop -c bbdev）。
           cat > "$DSH_HOME/profiles/headless/cordis.patch.yml" <<EOF
           - id: tool-verify-runner
             config:
-              repoPath: $GITHUB_WORKSPACE
+              repoPath: $BB_VERIFY_ROOT
               taskDir:  $RUNNER_TEMP/verify-tasks
           EOF
 
