@@ -63,6 +63,9 @@ jobs:
 
       # 方案 B：workflow_dispatch 的 actions/checkout@v4 检出的是 fork 默认分支，
       # 不是 PR 代码；必须在此显式检出 PR head（PR 号按 $GITHUB_REPOSITORY 解析）。
+      # 随后初始化 bbdev 三件套的最小子模块集：bbdev（CLI 本体，sourceme.sh 把
+      # $BB/bbdev 加进 PATH，缺它则 exec 命中空目录 → EISDIR/126）、bebop（bemu 源）。
+      # elf-tests 是 C 测试，无需 buddy-mlir / RTL 类子模块。
       - name: Check out PR head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,6 +74,17 @@ jobs:
           PR=${{ inputs.pr_number || github.event.pull_request.number }}
           gh pr checkout "$PR" --repo "$GITHUB_REPOSITORY"
           git log --oneline -1
+          git submodule update --init bbdev bebop
+          git submodule status bbdev bebop
+
+      # 官方 CI 顺序（.github/workflows/test.yml）：nix build 产生 ./result（riscv-gcc、
+      # verilator 等工具链所在）；干净 checkout 缺它则 devShell 内所有工具 not found。
+      # nix store 在本机已热，实测 <10s。
+      - name: Provision toolchain (nix build)
+        run: |
+          set -euo pipefail
+          nix build
+          ls result/bin | head -3
 
       - name: Stage dsh-plugin from the local checkout and build verify-runner
         run: |
