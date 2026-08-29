@@ -34,10 +34,12 @@ on:
   workflow_dispatch:            # 路线图 ②：最小实现先手动触发（《探索文档》§12）
     inputs:
       pr_number: { required: true, type: number }
-  # pull_request:               # 路线图 ③：Phase 3 已于 2026-08-30 在 PR #1 跑绿
-  #   types: [opened, synchronize]  后启用（启用前整段注释）。注意：self-hosted
-  #                                 runner 对本机有完全访问权，只接本仓库自己的
-  #                                 PR，不接陌生外部 PR（runner-setup.md §4）。
+  # 路线图 ③：pull_request 触发，Phase 3 已于 2026-08-30 在 PR #1 跑绿
+  # （run 33270283864，VERDICT: PASS）后启用。安全提醒：self-hosted runner 对本机
+  # 有完全访问权，本仓库 PR 事件只会来自本仓库自己的分支；**不要**把本 workflow
+  # 用于接收陌生外部 fork 的 PR（runner-setup.md §4）。
+  pull_request:
+    types: [opened, synchronize]
 
 # 持久化根是共享可变状态：同一时刻只允许一个 run 对其做 prepare + 增量构建。
 # concurrency 串行化 + 步骤内 flock 双保险（concurrency 只在 GitHub 侧排队，
