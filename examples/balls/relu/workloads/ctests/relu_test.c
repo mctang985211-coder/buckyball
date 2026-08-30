@@ -1,4 +1,5 @@
 /* phase-delivery e2e round 1: contract smoke (no semantic change) */
+/* phase-delivery e2e round 2: manifest corrected to pebble real stem */
 #include "buckyball.h"
 #include <bbhw/isa/isa.h>
 #include <bbhw/mem/mem.h>
