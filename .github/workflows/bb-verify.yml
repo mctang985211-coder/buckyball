@@ -34,6 +34,15 @@ on:
   workflow_dispatch:            # 路线图 ②：最小实现先手动触发（《探索文档》§12）
     inputs:
       pr_number: { required: true, type: number }
+      # 路线图 ④：分层门禁。merge=门禁层（快，bemu 全批）；complete=重验证（手动 dispatch
+      # 专用：叠加 pk-tests 与 verilator）。pull_request 自动触发时 inputs 为空，
+      # Resolve PR context 步骤缺省 LAYER=merge。
+      layer:
+        description: 'Verification layer (merge = fast gate, complete = heavy re-verify)'
+        type: choice
+        options: [merge, complete]
+        default: merge
+        required: false
   # 路线图 ③：pull_request 触发，Phase 3 已于 2026-08-30 在 PR #1 跑绿
   # （run 33270283864，VERDICT: PASS）后启用。安全提醒：self-hosted runner 对本机
   # 有完全访问权，本仓库 PR 事件只会来自本仓库自己的分支；**不要**把本 workflow
@@ -95,8 +104,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR=${{ inputs.pr_number || github.event.pull_request.number }}
+          # 路线图 ④：layer 只能来自 workflow_dispatch 输入；pull_request 事件固定 merge 层。
+          LAYER=${{ inputs.layer || 'merge' }}
           gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json title,body,files > pr-context.json
-          { echo "验证 PR #$PR。PR 上下文（含描述中的证据清单）如下："; \
+          { echo "验证 PR #$PR。验证层级：$LAYER（merge=门禁层；complete=重验证）。PR 上下文（含描述中的证据清单）如下："; \
             cat pr-context.json; } > task-prompt.md
 
       # 持久化根 prepare（flock + fetch PR ref + detach checkout + 增量 submodule）。
