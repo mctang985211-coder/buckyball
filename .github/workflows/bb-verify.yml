@@ -205,13 +205,51 @@ jobs:
               taskDir:  $RUNNER_TEMP/verify-tasks
           EOF
 
+      # verdict→退出码一致性（2026-08-30 修复）：此前 headless 会话 completed 退出 0，
+      # 贴出 VERDICT: FAIL 的轮次 job 仍绿。修复后：先让会话完整跑完（PR 评论回贴
+      # 发生在会话内部，由 agent 的 gh pr comment 完成——结论必须先贴上 PR 再让 job
+      # 变红），再对捕获的 stdout 解析 VERDICT 裁决本步骤退出码：
+      #   首个 ^VERDICT: (PASS|FAIL) 行 → PASS 且会话 exit 0 → 本步骤 exit 0（job 绿）；
+      #   VERDICT: FAIL 或解析不到 VERDICT → exit 1（job 红，宁红不假绿）。
       - name: Run verify-runner
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}   # zen go / qwen3.8-flash
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERIFY_STDOUT: ${{ runner.temp }}/verify-stdout.log
+          VERIFY_STDERR: ${{ runner.temp }}/verify-stderr.log
         run: |
           cd /home/ROXY/code/deepseek-harness
-          pnpm dsh --profile headless "$(cat "$GITHUB_WORKSPACE/task-prompt.md")"
+          # dsh headless 的进程退出码只反映会话是否正常完成（completed → 0），
+          # 不反映 PASS/FAIL（src/prompt.ts 约定）；结论由最终回答的 VERDICT 行表达。
+          set +e
+          pnpm dsh --profile headless "$(cat "$GITHUB_WORKSPACE/task-prompt.md")" \
+            > "$VERIFY_STDOUT" 2> "$VERIFY_STDERR"
+          DSH_RC=$?
+          set -euo pipefail
+          cat "$VERIFY_STDOUT"
+          cat "$VERIFY_STDERR" >&2
+          # ==== verdict-gate BEGIN (stub test extracts this block verbatim; keep in sync) ====
+          LINE=$(grep -m1 -E '^VERDICT:[[:space:]]*(PASS|FAIL)' "$VERIFY_STDOUT" || true)
+          VERDICT=$(printf '%s\n' "$LINE" | sed -n -E 's/^VERDICT:[[:space:]]*(PASS|FAIL).*/\1/p')
+          echo "verdict-gate: parsed VERDICT=${VERDICT:-<none>}, dsh session exit=${DSH_RC}"
+          case "$VERDICT" in
+            PASS)
+              if [ "$DSH_RC" -ne 0 ]; then
+                echo "::error::VERDICT says PASS but dsh session exited ${DSH_RC} -- failing (no fake green)"
+                exit 1
+              fi
+              echo "verdict-gate: PASS -- job green"
+              ;;
+            FAIL)
+              echo "::error::VERDICT: FAIL -- verification failed (see output above and the PR comment)"
+              exit 1
+              ;;
+            *)
+              echo "::error::no 'VERDICT: PASS|FAIL' line found in headless output -- treated as FAIL (no fake green)"
+              exit 1
+              ;;
+          esac
+          # ==== verdict-gate END ====
 
       - name: Archive session logs
         if: always()
