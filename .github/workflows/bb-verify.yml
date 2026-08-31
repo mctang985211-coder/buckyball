@@ -143,6 +143,9 @@ jobs:
           flock 9
           git -C "$BB_VERIFY_ROOT" fetch --force origin "refs/pull/${PR}/head"
           git -C "$BB_VERIFY_ROOT" checkout --detach --force FETCH_HEAD
+          # 换源（bbdev/e2e → 个人 fork）后必须 sync：update --init 对已 init 的
+          # 子模块不重读 .gitmodules 新 URL，会继续用 .git/config 里的旧 org URL。
+          git -C "$BB_VERIFY_ROOT" submodule sync
           git -C "$BB_VERIFY_ROOT" submodule update --init
           if [ ! -f "$BB_VERIFY_ROOT/compiler/thirdparty/buddy-mlir/llvm/llvm/CMakeLists.txt" ]; then
             git -C "$BB_VERIFY_ROOT/compiler/thirdparty/buddy-mlir" submodule update --init llvm
