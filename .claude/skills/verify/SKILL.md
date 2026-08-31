@@ -3,13 +3,13 @@ name: verify
 description: Verify functional correctness of the Ball named $ARGUMENTS. Use this skill when users ask to verify/test a Ball, check whether a Ball works correctly, or validate a newly created Ball.
 ---
 
-**Important: build, simulation, and test operations must be invoked via MCP tools from project `.mcp.json`. Do not call bbdev CLI or nix develop directly. If `buckyball-dev` is not loaded, stop and report it.**
+**Important: build, simulation, and test operations must be invoked via MCP tools from the project MCP server `buckyball-dev`. Do not call bbdev CLI or nix develop directly. If `buckyball-dev` is not loaded, stop and report it.**
 
 ## Phase 1 - Completeness Check
 
 Use `/check` logic to validate registration consistency, then ensure all required artifacts exist and fill missing pieces:
 1. Ball implementation: `examples/balls/<name>/arch/src/main/scala/`
-2. Registration entry in chip balldomain TOML under `examples/chips/<chip>/configs/tiles/cores/balldomains/`
+2. Registration entry in the core balldomain TOML under `examples/cores/<core>/configs/balldomains/`
 3. ISA macro file in `examples/balls/<ball>/workloads/isa/` (base ISA under `bb-tests/workloads/lib/bbhw/isa/`)
 4. CTest for that ball/chip
 
@@ -18,7 +18,8 @@ Use `/check` logic to validate registration consistency, then ensure all require
 1. Run `bbdev_workload_build(chip=...)` to build CTests
 2. Run `bbdev_bemu_sim(chip=..., binary=...)` first
 3. Run `bbdev_bebop_verilator_run(binary=..., config=...)` for RTL
-   - binary is `{chip}_{stem}-{platform}`, e.g. `toy_transpose_test-baremetal`
+   - binary is the workload test id, e.g. `toy-toy-ctest-transpose_test-baremetal`
+     (see `examples/chips/<chip>/regression/batch/*/workloads-*.toml`)
    - config is required, e.g. `sims.verilator.BuckyballToyVerilatorConfig`
 4. If build/simulation fails, switch to `/debug` flow
 

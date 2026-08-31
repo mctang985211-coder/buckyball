@@ -13,7 +13,7 @@ description: Systematically debug Buckyball simulation failures. Use this skill 
 2. Confirm key log files exist:
    - `stdout.log` - program stdout (`PASSED`/`FAILED`, `printf`)
    - `disasm.log` - disassembled instruction stream
-   - `bdb.log` - Buckyball hardware debug log (most important)
+   - `bdb.log` / `bdb.ndjson` - Buckyball hardware debug log (most important)
    - `bbdev/server.log` - bbdev server log (compilation errors usually appear here)
 
 ## Step 2 - Layered Analysis

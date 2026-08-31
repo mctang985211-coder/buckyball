@@ -23,7 +23,7 @@ Default: **do not modify** `arch/src/main/scala/framework/`. Gaps go to mainline
 ## When to use
 
 - New `examples/chips/<chip>/`
-- Workload does not fit toy/pebble/poly/goban
+- Workload does not fit toy/pebble/poly/goban/multi-rocket
 - Need hetero cores in one tile, scaled by stage latency
 
 ## Process
@@ -40,7 +40,7 @@ Explain why existing chips fail. Identify compute regimes (e.g. DSP vs long-seq 
 
 ### 3. Graph cut (before E2E)
 
-1. Prefer existing buddy import + `PartitionedGraphDriver` + `codegen/partition_strategy.py` (see `docs/LayerPartitioning.md`)
+1. Prefer existing buddy import + `PartitionedGraphDriver` + `codegen/partition_strategy.py` (see `compiler/thirdparty/buddy-mlir/frontend/Python/graph/partitioned_graph_driver.py` and its usages under `bb-tests/workloads/src/ModelTest/e2e/models/`)
 2. Do **not** write a chip-private Dynamo cut script
 3. Publish stage IR + partition IR + `partition_manifest` / slice groups
 4. Point per-slice `contract.toml` at those artifacts
@@ -54,10 +54,12 @@ Do **not** require full-model green before the cut.
 
 Create `examples/chips/<chip>/`:
 
-- `chip.toml` (only `[chip]` mill class: `verilatorConfig` / `p2eConfig`)
-- `configs/` tile with `sharedMem` + `[[cores]]` includes into `examples/cores/<name>/`
-- `arch/.../CustomConfigs.scala` + `sims/{verilator,p2e}/TargetConfigs.scala`
-- `workloads/` (contracts + later binaries), `regression/batch/{bemu,verilator,p2e}/`, optional `kernel/`
+- `configs/chip.toml` — `[designs] include` + `[sims]` (verilator/p2e config class strings; chip identity is the directory name)
+- `configs/designs/<design>.toml` — `[top] nTiles` + `[[tiles]]` includes
+- `configs/designs/tiles/<tile>.toml` — tile config (`[sharedMem]`, `[privateDCache]`, `[coreTemplate]` including core configs from `examples/cores/<core>/configs/`)
+- `arch/src/main/scala/CustomConfigs.scala` — `WithBuckyballTiles("../examples/chips/<chip>/configs/generated/chip.pb")` (the config chain compiles TOML → `generated/chip.pb`)
+- `arch/src/main/scala/sims/{verilator,p2e,firesim}/TargetConfigs.scala` — sim config classes referenced by `[sims]`
+- `workloads/` (`CMakeLists.txt` + `ctests/` + `mlir_tests/`), `regression/batch/{bemu,verilator,p2e}/workloads-{elf,pk}.toml`, optional `kernel/`
 - Multi-core: chip `emu/` wrapping a core bemu (see goban/poly)
 
 Stub core dirs so includes resolve; mark stubs clearly. Core-designers replace stubs.
@@ -97,7 +99,7 @@ mismatch = "error"
 
 ## Reference package
 
-`examples/chips/poly/` — hetero prefill/decode tile (`sharedMem`, multi-core emu). Also see `examples/chips/goban/` for a single-core Buckyball chip skeleton.
+`examples/chips/toy/` — minimal skeleton (1 BBTile × 1 core, full config chain). Also see `examples/chips/poly/` — hetero prefill/decode tile (`sharedMem`, multi-core emu); `examples/chips/goban/` — scalable multi-core tile designs.
 
 ## Anti-patterns
 
