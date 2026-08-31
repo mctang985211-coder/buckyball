@@ -7,7 +7,7 @@
 	branch = examples
 [submodule "bbdev"]
 	path = bbdev
-	url = https://github.com/DangoSys/bbdev.git
+	url = https://github.com/mctang985211-coder/bbdev.git
 [submodule "thirdparty/waveform-mcp"]
 	path = thirdparty/waveform-mcp
 	url = https://github.com/jiegec/waveform-mcp.git
@@ -32,7 +32,7 @@
 	branch = master
 [submodule "bb-tests/workloads/src/ModelTest/e2e"]
 	path = bb-tests/workloads/src/ModelTest/e2e
-	url = https://github.com/buddy-compiler/buddy-examples.git
+	url = https://github.com/mctang985211-coder/buddy-examples.git
 	branch = buckyball
 [submodule "docs"]
 	path = docs
