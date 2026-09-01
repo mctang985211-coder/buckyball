@@ -84,6 +84,12 @@ jobs:
           for tool in nix gh pnpm node; do
             command -v "$tool" >/dev/null || { echo "::error::$tool not on PATH"; exit 1; }
           done
+          # E1 evidence (audit 2026-08-31): record which node/pnpm the job actually
+          # resolves -- research §7.1 says bare `pnpm dsh` breaks on the flake node
+          # v24.18.0, yet this workflow runs it green; hypothesis is that the runner
+          # PATH hits ~/.local/bin/node (v24.20.0) instead. Log version + path.
+          echo "node at $(command -v node): $(node --version)"
+          echo "pnpm at $(command -v pnpm): $(pnpm --version)"
           for path in \
             /home/ROXY/code/deepseek-harness \
             /home/ROXY/code/bb_work/dsh-plugin/verify-runner/ci/settings.ci.yaml \
