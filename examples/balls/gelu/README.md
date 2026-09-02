@@ -39,6 +39,34 @@ bank row), `n` beyond bank capacity, invalid/unallocated/multi-group bank,
 and `in_bank == out_bank`. An undeclared funct7 panics at the dispatch
 chain end.
 
+## Compiler
+
+`compiler/src/` is the minimal compiler package that
+`compiler/scripts/pb_to_target_registry.py` requires for every registered
+ball (exactly one dialect TD + a `LegalizeForLLVMExport.cpp`; the assign /
+bank-SSA pattern files are wired through the generated lowering hooks):
+
+- `Dialect/Buckyball/GeluBall.td` — `bucky.gelu_matrix` (logical f32 tile,
+  distinct input/output memrefs), `bucky.gelu` (physical two-bank op),
+  `bucky.bank_gelu` (bank-SSA handle form whose result chains the output
+  bank handle).
+- `Dialect/Buckyball/Transforms/LegalizeForLLVMExport.cpp` — lowers
+  `bucky.gelu` to `CustomIntrOp` with
+  `rs1 = packRs1BanksIter(in, 0, out, n)` (BANK1 and rs2 lower as zero,
+  matching the fail-hard reserved fields) and funct7 taken from the target
+  registry under mnemonic `GELU`.
+- `Conversion/LowerBuckyball/AssignPhysicalBankPatterns.cpp` —
+  `bank_gelu` -> `gelu` (compiled into the target `LowerBuckyballPass` via
+  the generated `BUCKYBALL_ASSIGN_HOOK`).
+- `Conversion/LowerBuckyball/LowerBuckyballToBankSSAPatterns.cpp` —
+  `gelu_matrix` -> chunked `alloc/mvin/bank_gelu/mvout/fence` sequences;
+  uses local bank helpers instead of `Utils/BankUtils.h`, whose
+  `createBankSMatMul` needs the SMatMul ops absent from Toy's union.
+- `Backend/include/IntrinsicsRISCVGeluBall.td` — `int_riscv_bb_gelu`.
+
+Core integration: `examples/cores/toy/compiler/src/CMakeLists.txt` lists
+the dialect directory in `TOY_BALL_COMPILER_DIALECT_DIRS`.
+
 ## Workloads
 
 - `workloads/ctests/gelu_test.c`: small fixed 16-element vector covering
