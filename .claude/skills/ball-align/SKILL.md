@@ -4,14 +4,14 @@ description: >
   Align a Buckyball Ball across the full stack (ctest → bemu → compiler → MLIR → RTL → UVM)
   to one contract. Use when the user asks for Ball alignment / contract sync, when bemu and
   Verilator/RTL disagree, when renaming ISA fields, or when extending tests after a Ball
-  semantic change. Source of truth: docs/superpowers/ball-dev-guide.md.
+  semantic change.
 ---
 
-**Important:** build/sim only via MCP from `.mcp.json` (`validate`, `bbdev_workload_*`, `bbdev_bemu_*`, `bbdev_bebop_verilator_*` / `bbdev_verilator_*`, `bbdev_uvm_*`). Do not call `bbdev` CLI or `nix develop -c bbdev` directly. If `buckyball-dev` is missing, stop and report it.
+**Important:** build/sim only via the project MCP server `buckyball-dev` (`validate`, `bbdev_workload_*`, `bbdev_bemu_*`, `bbdev_bebop_verilator_*` / `bbdev_verilator_*`, `bbdev_uvm_*`). Do not call `bbdev` CLI or `nix develop -c bbdev` directly. If `buckyball-dev` is missing, stop and report it.
 
 Gold = **ctest semantics**. bemu / compiler / RTL / UVM must share the same contract. Test env is **fail-hard**: illegal inputs panic/assert at every layer; no soft defaults or fallbacks.
 
-Canonical guide: `docs/superpowers/ball-dev-guide.md`. This skill is the executable alignment workflow.
+This skill is the executable alignment workflow.
 
 ## Phase 0 - Lock the contract (before any code)
 
@@ -42,7 +42,7 @@ Against `examples/balls/<name>/` and the target chip, list gaps:
 | UVM | Stimulus/scoreboard on the same contract | **After RTL is green** |
 
 - MLIR: keep `bank` Op and lowered `ball` Op separate (see transpose: contract + mlirtest)
-- New ctest / mlirtest → chip **bemu** `workloads-elf.toml` + `workloads-pk.toml`
+- New ctest / mlirtest → chip **bemu** regression tomls `workloads-elf.toml` + `workloads-pk.toml` under `examples/chips/<chip>/regression/batch/bemu/`
 - Verilator lists take **small tests only**, not bank tests
 
 ## Phase 2 - One semantics across the stack

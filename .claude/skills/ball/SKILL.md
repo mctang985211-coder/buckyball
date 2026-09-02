@@ -3,13 +3,13 @@ name: ball
 description: Create a new Buckyball Ball operator named $ARGUMENTS, covering the full flow from implementation to verification.
 ---
 
-**Important: all build/simulation operations must go through MCP tools from project `.mcp.json` (`validate`, `bbdev_workload_build`, `bbdev_bemu_sim`, `bbdev_bebop_verilator_run`, etc.). Do not use bbdev CLI or nix develop directly. If `buckyball-dev` is not loaded, stop and report it.**
+**Important: all build/simulation operations must go through MCP tools from the project MCP server `buckyball-dev` (`validate`, `bbdev_workload_build`, `bbdev_bemu_sim`, `bbdev_bebop_verilator_run`, etc.). Do not use bbdev CLI or nix develop directly. If `buckyball-dev` is not loaded, stop and report it.**
 
 ## Phase 1 - Requirement Collection
 
 1. Inspect registration state and decide `ballId` + `funct7`:
-   - active file from `examples/chips/<chip>/configs/tiles/cores/default.toml` → `balldomain = ...`
-   - usually `examples/chips/<chip>/configs/tiles/cores/balldomains/*.toml`
+   - active file from `examples/cores/<core>/configs/default.toml` → `balldomain = ...`
+   - usually `examples/cores/<core>/configs/balldomains/*.toml`
 2. Check for partial existing implementation (incremental mode):
    - existing directory in `examples/balls/`
    - existing ISA macro in `examples/balls/<name>/workloads/isa/` (or base under `bb-tests/workloads/lib/bbhw/isa/`)
@@ -24,11 +24,11 @@ description: Create a new Buckyball Ball operator named $ARGUMENTS, covering the
 ## Phase 2 - Implement the Ball
 
 1. Read references:
-   - simple example: `.../prototype/relu/ReluBall.scala`, `Relu.scala`
-   - complex example: `.../prototype/systolicarray/`
-   - Blink protocol: `.../blink/blink.scala`, `bank.scala`, `status.scala`
-   - SRAM IO: `.../memdomain/backend/banks/SramIO.scala`
-2. Create files under `examples/balls/<name>/arch/src/main/scala/` using templates from `references/`.
+   - simple example: `examples/balls/relu/arch/src/main/scala/ReluBall.scala`, `Relu.scala`
+   - complex example: `examples/balls/gemmini/arch/src/main/scala/GemminiBall.scala`
+   - Blink protocol: `arch/src/main/scala/framework/balldomain/blink/blink.scala`, `bank.scala`, `status.scala`
+   - SRAM IO: `arch/src/main/scala/framework/memdomain/backend/banks/SramIO.scala`
+2. Create files under `examples/balls/<name>/arch/src/main/scala/`, using the reference implementations above as templates.
 
 ### Key constraints
 - SRAM read latency is 1 cycle (`resp.valid` in the cycle after `req.fire`)
@@ -38,7 +38,7 @@ description: Create a new Buckyball Ball operator named $ARGUMENTS, covering the
 
 ## Phase 3 - Register the Ball
 
-Edit the chip balldomain TOML (the one selected by `cores/default.toml`, or the variant you are changing):
+Edit the core balldomain TOML (the one selected by `examples/cores/<core>/configs/default.toml`, or the variant you are changing):
 
 1. Append a `ballIdMappings` row (`ballId`, `ballName`, `ballClass`, `config`, `inBW`, `outBW`)
 2. Update `ballNum`
@@ -53,12 +53,13 @@ central `bb-tests/workloads/lib/bbhw/isa/isa.h` (base mem/frontend only).
 
 ## Phase 5 - Add CTest
 
-1. Create `<name>_test.c` under `bb-tests/workloads/src/CTest/toy/`
-2. Register in `bb-tests/workloads/src/CTest/toy/CMakeLists.txt` using `add_cross_platform_test_target`
+1. Create `<name>_test.c` under `examples/balls/<name>/workloads/ctests/`
+2. Register it in `examples/balls/<name>/workloads/ctests/CMakeLists.txt` via `add_buckyball_ctests(...)`
+   (chip-level ctests live under `examples/chips/<chip>/workloads/ctests/`)
 
 ## Phase 6 - Validate, Build, and Simulate
 
-1. Run `validate` and ensure all 6 invariants pass
+1. Run `validate` and ensure all 7 invariants pass
 2. Run `bbdev_workload_build(chip="toy")` (or the target chip)
 3. Run `bbdev_bemu_sim` for this Ball's CTest binary (functional first)
 4. Run `bbdev_bebop_verilator_run` with an explicit config (e.g. `sims.verilator.BuckyballToyVerilatorConfig`)

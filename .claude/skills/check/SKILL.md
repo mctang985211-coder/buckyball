@@ -8,8 +8,8 @@ description: Staticaly validate Buckyball Ball registration consistency and opti
 Call MCP tool `validate(chip=..., balldomain?=...)`.
 
 Default `chip=toy`. If `balldomain` is omitted, uses the file referenced by
-`examples/chips/<chip>/configs/tiles/cores/default.toml` (`balldomain = ...`).
-You can also pass a stem such as `default` / `full`.
+`examples/cores/<core>/configs/default.toml` (`balldomain = ...`).
+You can also pass a stem such as `default`.
 
 Checks on that TOML:
 
@@ -19,7 +19,7 @@ Checks on that TOML:
 4. no duplicated `funct7` / `mnemonic` in `ballISA` (scope = this single balldomain / core; other cores may reuse the same funct7)
 5. every `ballISA.bid` exists in mappings; every ball has ≥1 ISA entry
 6. relative `config=` paths exist; `inBW`/`outBW` are positive
-7. ball ISA headers / MLIR must not hardcode ball `funct7` (encoding is generated from this TOML into `examples/cores/<core>/isa/ballISA.h`)
+7. ball ISA headers / MLIR must not hardcode ball `funct7` (encoding is generated from the core TOML chain into the per-test-target `ballISA.h`, `${BUCKYBALL_ISA_DIR}/${BUCKYBALL_CTEST_TARGET}/ballISA.h`)
 
 Report pass/fail for each item.
 
@@ -30,7 +30,7 @@ After validation, print the `balls` array from the tool result as a table:
 | ballId | ballName | funct7 | mnemonic | inBW | outBW | config |
 |--------|----------|--------|----------|------|-------|--------|
 
-Data source: `examples/chips/<chip>/configs/tiles/cores/balldomains/*.toml`
+Data source: `examples/cores/<core>/configs/balldomains/*.toml`
 
 ## Auto Fix
 
