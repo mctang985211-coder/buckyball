@@ -1,6 +1,6 @@
 # Toy: virtual single-core. Mounts leftover balls not used by pebble/poly/goban.
 
-ballNum = 6
+ballNum = 5
 
 ballIdMappings = [
   { ballId = 0, ballName = "GemminiBall", ballClass = "examples.balls.gemmini.GemminiBall", config = "../../../../balls/gemmini/configs/default.toml", inBW = 2, outBW = 4 },
@@ -8,7 +8,6 @@ ballIdMappings = [
   { ballId = 2, ballName = "Mxfp2IntBall", ballClass = "examples.balls.mxfp2int.Mxfp2IntBall", config = "../../../../balls/mxfp2int/configs/default.toml", inBW = 1, outBW = 1, mmioReadBW = 1 },
   { ballId = 3, ballName = "GeluBall", ballClass = "examples.balls.gelu.GeluBall", config = "../../../../balls/gelu/configs/default.toml", inBW = 1, outBW = 1 },
   { ballId = 4, ballName = "SigmoidBall", ballClass = "examples.balls.sigmoid.SigmoidBall", config = "../../../../balls/sigmoid/configs/default.toml", inBW = 1, outBW = 1 },
-  { ballId = 5, ballName = "TanhBall", ballClass = "examples.balls.tanh.TanhBall", config = "../../../../balls/tanh/configs/default.toml", inBW = 1, outBW = 1 },
 ]
 
 ballISA = [
@@ -39,5 +38,4 @@ ballISA = [
   { mnemonic = "MXFP2INT", funct7 = 55, bid = 2 },
   { mnemonic = "GELU", funct7 = 56, bid = 3 },
   { mnemonic = "SIGMOID", funct7 = 57, bid = 4 },
-  { mnemonic = "TANH", funct7 = 58, bid = 5 },
 ]
