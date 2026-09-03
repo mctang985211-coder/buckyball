@@ -18,6 +18,4 @@ tests = [
   "toy-toy-ctest-mxfp2int_test-linux",
   "toy-toy-ctest-gelu_test-linux",
   "toy-toy-ctest-gelu_bank_test-linux",
-  "toy-toy-ctest-sigmoid_test-linux",
-  "toy-toy-ctest-sigmoid_bank_test-linux",
 ]

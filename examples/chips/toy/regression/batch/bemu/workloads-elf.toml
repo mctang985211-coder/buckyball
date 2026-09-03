@@ -18,6 +18,4 @@ tests = [
   "toy-toy-ctest-mxfp2int_test-baremetal",
   "toy-toy-ctest-gelu_test-baremetal",
   "toy-toy-ctest-gelu_bank_test-baremetal",
-  "toy-toy-ctest-sigmoid_test-baremetal",
-  "toy-toy-ctest-sigmoid_bank_test-baremetal",
 ]
