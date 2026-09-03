@@ -273,6 +273,9 @@ jobs:
 
       - name: Archive session logs
         if: always()
+        # observability only - flaky artifact-upload resets must not flip
+        # the verdict-gate semantics of a red job
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: dsh-sessions
