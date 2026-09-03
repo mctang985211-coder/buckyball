@@ -20,4 +20,6 @@ tests = [
   "toy-toy-ctest-gelu_bank_test-baremetal",
   "toy-toy-ctest-sigmoid_test-baremetal",
   "toy-toy-ctest-sigmoid_bank_test-baremetal",
+  "toy-toy-ctest-tanh_test-baremetal",
+  "toy-toy-ctest-tanh_bank_test-baremetal",
 ]
