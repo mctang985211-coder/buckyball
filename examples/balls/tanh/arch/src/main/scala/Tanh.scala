@@ -111,16 +111,17 @@ class Tanh(val b: GlobalConfig) extends Module {
     val man = abs(22, 0)              // 23 bits
     val v   = Cat(1.U(1.W), man)      // 24-bit 1.mantissa
     val xq  = v >> (130.U(8.W) - exp) // |x| * 2^20, floor
-    // exp < 107 shifts the 24-bit v by >= 24 -> 0 (subnormals and
-    // |x| < 2^-22 flush to zero, |tanh - x| < 2^-20 there, inside the 1e-4
-    // contract); exp in 107..130 inside the clamp keeps the shift in 0..23
-    // (exp == 130 is exactly the [8,10) band below the clamp).
+    // exp <= 106 shifts the 24-bit v by >= 24 -> xq = 0 (subnormals and
+    // |x| < 2^-20): the pipeline then emits the segment-0 constant
+    // t(0) = c0 = 6 = 5.72e-06, inside the 1e-4 contract against a golden
+    // <= 9.6e-07 there; exp in 107..130 inside the clamp keeps the shift in
+    // 0..23 (exp == 130 is exactly the [8,10) band below the clamp).
 
     val u   = xq                                     // |x|, Q20, 24 bits
     val seg = Mux(u(23, 19) > 19.U, 19.U, u(23, 19)) // segment, saturated to 19
-    val dz  = u - (seg << 19)                        // 24 bits; bit 23 is set only
-    // in the clamp-discarded band
-    // (big == 0 forces dz < 2^19)
+    val dz  = u - (seg << 19)                        // 24 bits; big == 0 forces seg = u >> 19, so
+    // every used result has dz < 2^19 (bit 23 clear); dz keeps a 23rd bit
+    // only in the clamp-discarded band, where the output is never taken
 
     val dzS = dz.asSInt // sign bit clear whenever the result is used
     val c   = Coefs(seg)
