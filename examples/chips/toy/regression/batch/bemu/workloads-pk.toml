@@ -16,4 +16,6 @@ tests = [
   "toy-toy-ctest-gemmini_ws_risc_basic_test-linux",
   "toy-toy-ctest-mmio_minimal_test-linux",
   "toy-toy-ctest-mxfp2int_test-linux",
+  "toy-toy-ctest-gelu_test-linux",
+  "toy-toy-ctest-gelu_bank_test-linux",
 ]
