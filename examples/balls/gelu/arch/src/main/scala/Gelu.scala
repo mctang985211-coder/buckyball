@@ -63,9 +63,13 @@ class Gelu(val b: GlobalConfig) extends Module {
   // threshold sweeps: worst |hw - gelu_ref| = 7.2e-6, tolerance 1e-4).
   // ------------------------------------------------------------------
   private val Q   = 20
-  private val QB  = "h100000".U   // 2^20
-  private val CR2 = 741455.U      // round(2^20 / sqrt(2))
-  private val TH  = "h40b504f3".U // smallest fp32 with |x| >= 4*sqrt(2)
+  // Phi is centered on 2^20 in Q20. This must be a signed literal: asSInt
+  // on a UInt literal is a bitcast of the canonicalized minWidth pattern
+  // ("h100000".U is 21 bits, so asSInt yields -2^20 and pad(lit) is folded
+  // away as a value-preserving no-op before the bitcast is re-applied).
+  private val QB  = 1048576.S(22.W) // +2^20 as a signed literal, sign bit clear
+  private val CR2 = 741455.U        // round(2^20 / sqrt(2))
+  private val TH  = "h40b504f3".U   // smallest fp32 with |x| >= 4*sqrt(2)
 
   // erf(z) ~= c0 + c1*dz + c2*dz^2 + c3*dz^3 + c4*dz^4 on
   // z in [16*0.25, 16*0.25 + 0.25), dz = z - seg*0.25, all in Q20.
@@ -112,10 +116,8 @@ class Gelu(val b: GlobalConfig) extends Module {
     val e = mul20(mul20(mul20(mul20(c(4), dzS) +& c(3), dzS) +& c(2), dzS) +& c(1), dzS) +& c(0)
 
     // Phi = 0.5*(1 + sign*erf) in Q20; |erf| <= 1 so Phi in [0, 2^20].
-    // QB is a 21-bit literal of 2^20: asSInt would reinterpret it as
-    // -2^20, so pad one 0 bit first to keep the value signed-positive.
-    val qbS = QB.pad(1).asSInt
-    val phi = Mux(sign, qbS -& e, qbS +& e) >> 1
+    // QB is an explicitly signed +2^20 literal, used directly.
+    val phi = Mux(sign, QB -& e, QB +& e) >> 1
     val yq  = (xq * phi.asUInt) >> Q // |y| in Q20, 24 bits
 
     val zeroY = Cat(sign, 0.U(31.W)) // +/-0.0
