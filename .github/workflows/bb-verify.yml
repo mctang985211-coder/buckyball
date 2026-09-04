@@ -60,6 +60,9 @@ concurrency:
 jobs:
   verify:
     runs-on: cpu-server         # self-hosted label：nix 环境与 bbdev 都在这台机器上
+    # 基线：merge 层 6-31min，complete 层 ~40-70min；bbdev 自带轮询上限 24h，故
+    # 由 job 侧给出余量充足但确实有效的天花板。
+    timeout-minutes: 180
     env:
       BB_VERIFY_ROOT: /home/ROXY/bb-verify/buckyball
     steps:
@@ -109,6 +112,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           PR=${{ inputs.pr_number || github.event.pull_request.number }}
           # 路线图 ④：layer 只能来自 workflow_dispatch 输入；pull_request 事件固定 merge 层。
           LAYER=${{ inputs.layer || 'merge' }}
@@ -136,7 +140,8 @@ jobs:
       #   b) buddy-mlir 的嵌套 llvm 子模块单独守卫：compiler 构建硬依赖
       #      llvm/llvm 源码；bootstrap 时已按 pinned commit 装好，这里只在缺失时
       #      才补（shallow fetch by sha，见 bootstrap 脚本）。
-      # 检出后校验 HEAD == PR head sha，防止 race（PR 被 force-push 等）。
+      # 检出后校验 HEAD == PR head sha，防止 race（PR 被 force-push 等）；比对必须在
+      # flock 临界区内做，出锁后锁外的一切都不再可信。
       - name: Prepare persistent repo (flock + PR head + incremental submodules)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,11 +162,11 @@ jobs:
             git -C "$BB_VERIFY_ROOT/compiler/thirdparty/buddy-mlir" submodule update --init llvm
           fi
           HAVE_SHA=$(git -C "$BB_VERIFY_ROOT" rev-parse HEAD)
-          flock -u 9
           if [ "$HAVE_SHA" != "$WANT_SHA" ]; then
             echo "::error::persistent root at ${HAVE_SHA:0:8}, expected PR head ${WANT_SHA:0:8}"
             exit 1
           fi
+          flock -u 9
           echo "persistent root at $(git -C "$BB_VERIFY_ROOT" log --oneline -1)"
 
       # 每 run 的 provision 序列（= 上游 check.yaml 的 chip-check 顺序，全部在持久
@@ -248,7 +253,7 @@ jobs:
           set -euo pipefail
           cat "$VERIFY_STDOUT"
           cat "$VERIFY_STDERR" >&2
-          # ==== verdict-gate BEGIN (stub test extracts this block verbatim; keep in sync) ====
+          # ==== verdict-gate BEGIN ====
           LINE=$(grep -m1 -E '^VERDICT:[[:space:]]*(PASS|FAIL)' "$VERIFY_STDOUT" || true)
           VERDICT=$(printf '%s\n' "$LINE" | sed -n -E 's/^VERDICT:[[:space:]]*(PASS|FAIL).*/\1/p')
           echo "verdict-gate: parsed VERDICT=${VERDICT:-<none>}, dsh session exit=${DSH_RC}"
