@@ -117,7 +117,7 @@ class LayerNorm(val b: GlobalConfig) extends Module {
   val betaWord  = Reg(UInt(128.W))
   val xLanes    = VecInit(Seq.tabulate(4)(i => xWord(32 * i + 31, 32 * i)))
   val gLanes    = VecInit(Seq.tabulate(4)(i => gammaWord(32 * i + 31, 32 * i)))
-  val bLanes    = VecInit(Seq.tabulate(4)(i => betaWord(32 * i + 31, 32 * i)))
+  val betaLanes = VecInit(Seq.tabulate(4)(i => betaWord(32 * i + 31, 32 * i)))
   val yLaneIeee = RegInit(VecInit(Seq.fill(4)(0.U(32.W))))
 
   // RecFN(8,24) state: row accumulators and derived row statistics.
@@ -179,7 +179,7 @@ class LayerNorm(val b: GlobalConfig) extends Module {
   mulG.io.b       := f2r(gLanes(lane))
   addY.io.subOp   := false.B
   addY.io.a       := mulG.io.out
-  addY.io.b       := f2r(bLanes(lane))
+  addY.io.b       := f2r(betaLanes(lane))
 
   // ---------------------------------------------------------------------
   // Newton reciprocal of C (IEEE input, RecFN output).  Seed 2^-E-1
