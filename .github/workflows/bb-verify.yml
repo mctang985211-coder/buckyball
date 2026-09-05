@@ -27,6 +27,12 @@
 #   - 安全纪律：全文件无任何明文 key。LLM key 只经 repo secret DEEPSEEK_API_KEY
 #     注入（Run verify-runner 步骤 env）；provider 配置用 apiKeyEnv 引用同名环境
 #     变量（见 ci/settings.ci.yaml）。
+#
+# 2026-09-06 确定性预判改造：stage 推断 / 证据清单 schema 校验 / 模型绑定三源检查 /
+# slices 证据查证由 verify-runner/scripts/ 下四个纯 node 脚本在「Deterministic
+# verdict inputs」步骤产出并注入 task-prompt.md（prompt.ts 只消费不重新判定）；
+# Run verify-runner 之后新增双门禁：评论在场门禁（comments∪reviews 缺 VERDICT 首行
+# 即红，r4 假绿事故双保险）与只读门禁（会话前后 tracked diff 逐字节比对）。
 
 name: bb-verify
 
@@ -116,9 +122,13 @@ jobs:
           PR=${{ inputs.pr_number || github.event.pull_request.number }}
           # 路线图 ④：layer 只能来自 workflow_dispatch 输入；pull_request 事件固定 merge 层。
           LAYER=${{ inputs.layer || 'merge' }}
-          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json title,body,files > pr-context.json
-          { echo "验证 PR #$PR。验证层级：$LAYER（merge=门禁层；complete=重验证）。PR 上下文（含描述中的证据清单）如下："; \
-            cat pr-context.json; } > task-prompt.md
+          echo "PR=$PR" >> "$GITHUB_ENV"
+          echo "LAYER=$LAYER" >> "$GITHUB_ENV"
+          # comments,reviews 供 slices-gate 查证（PASS 报告可能落在 review 面）；
+          # headRefOid 供「报告内 head sha == 当前 head」核对；task-prompt.md
+          # 由持久化根 prepare 之后的 Deterministic verdict inputs 步骤组装。
+          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json title,body,files,headRefOid,comments,reviews > pr-context.json
 
       # 持久化根 prepare（flock + fetch PR ref + detach checkout + 增量 submodule）。
       # 为什么不复用上游 .github/scripts/ci_repo_lock.sh prepare：
@@ -168,6 +178,27 @@ jobs:
           fi
           flock -u 9
           echo "persistent root at $(git -C "$BB_VERIFY_ROOT" log --oneline -1)"
+
+      # 确定性预判（2026-09-06 起，stage/清单/绑定/slices 证据四判定由脚本产出，
+      # 不再是 prompt 恳求）：脚本直接跑本机检出的 verify-runner/scripts（纯 node，
+      # 无构建依赖；cp -a staging 在后面的 Stage dsh-plugin 步骤才发生，故此处
+      # 引用本机绝对路径而非 $DSH_PLUGIN_DIR）。判定块注入 task-prompt.md 尾部，
+      # prompt.ts 只消费不重新判定；validate/binding 的 PRE-FAIL 让会话直接回贴
+      # FAIL，省掉一次全批白跑。脚本非零退出 = 判定管线故障 → job 红（宁红不假绿）。
+      # 必须在持久化根 prepare 之后跑：清单/绑定的检出树核对以 PR head 为准。
+      - name: Deterministic verdict inputs (stage/manifest/binding/slices)
+        run: |
+          set -euo pipefail
+          SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
+          { echo "验证 PR #$PR。验证层级：$LAYER（merge=门禁层；complete=重验证）。PR 上下文（含描述中的证据清单）如下："
+            cat pr-context.json
+            echo
+            echo "===== CI 确定性判定（脚本注入，直接消费，不得重新判定）====="
+            node "$SCRIPTS/infer-stage.mjs" --context pr-context.json
+            node "$SCRIPTS/validate-manifest.mjs" --context pr-context.json --repo-root "$BB_VERIFY_ROOT"
+            node "$SCRIPTS/binding-check.mjs" --context pr-context.json --repo-root "$BB_VERIFY_ROOT"
+            node "$SCRIPTS/slices-verify.mjs" --context pr-context.json
+          } > task-prompt.md
 
       # 每 run 的 provision 序列（= 上游 check.yaml 的 chip-check 顺序，全部在持久
       # 化根内增量执行；2026-08-30 持久化根实测：nix build 4.5s、config --install
@@ -230,6 +261,11 @@ jobs:
               taskDir:  $RUNNER_TEMP/verify-tasks
           EOF
 
+      # 只读门禁基线：会话前的 tracked diff 快照。git diff 只覆盖 tracked 内容；
+      # 子模块工作树的既有构建残留由基线吸收，会话期间的新增改动必现形。
+      - name: Snapshot persistent-root diff (read-only gate baseline)
+        run: git -C "$BB_VERIFY_ROOT" diff HEAD > "$RUNNER_TEMP/pre-verify.diff"
+
       # verdict→退出码一致性（2026-08-30 修复）：此前 headless 会话 completed 退出 0，
       # 贴出 VERDICT: FAIL 的轮次 job 仍绿。修复后：先让会话完整跑完（PR 评论回贴
       # 发生在会话内部，由 agent 的 gh pr comment 完成——结论必须先贴上 PR 再让 job
@@ -275,6 +311,36 @@ jobs:
               ;;
           esac
           # ==== verdict-gate END ====
+
+      # 门禁①（2026-09-06，r4 假绿事故的双保险）：VERDICT 必须真实落在 PR 的
+      # comments ∪ reviews 任一面（首行 ^VERDICT: (PASS|FAIL)）——会话自称已贴
+      # 不算数；缺即红。verdict-gate 已红的路径不再重复判（本步只在绿路径上跑）。
+      - name: "Gate: verdict present on the PR (no fake green)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          COUNT=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
+            --jq '[.comments[].body, .reviews[].body][] | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)")) | "hit"' \
+            | wc -l)
+          echo "verdict-presence-gate: PR #$PR comments∪reviews 首行 VERDICT 条目数 = $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::no 'VERDICT: PASS|FAIL' first line in PR #$PR comments ∪ reviews -- repost failed, failing (no fake green)"
+            exit 1
+          fi
+
+      # 门禁②：验证会话对持久化根只读 —— 会话前后的 tracked diff 逐字节比对
+      # （基线见 Snapshot 步骤；子模块既有残留不进入差集）。
+      - name: "Gate: persistent root untouched by the session"
+        run: |
+          set -euo pipefail
+          git -C "$BB_VERIFY_ROOT" diff HEAD > "$RUNNER_TEMP/post-verify.diff"
+          if ! cmp -s "$RUNNER_TEMP/pre-verify.diff" "$RUNNER_TEMP/post-verify.diff"; then
+            echo "::error::persistent root tracked diff changed during the session (verifier must be read-only)"
+            diff "$RUNNER_TEMP/pre-verify.diff" "$RUNNER_TEMP/post-verify.diff" | head -50 || true
+            exit 1
+          fi
+          echo "readonly-gate: persistent root diff unchanged"
 
       - name: Archive session logs
         if: always()
