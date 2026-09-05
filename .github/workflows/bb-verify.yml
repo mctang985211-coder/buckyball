@@ -24,7 +24,7 @@
 #   - bbdev 不在宿主 PATH 上：verify-runner 按 §11 三级解析回退 `nix develop -c
 #     bbdev`（cwd=repoPath=持久化根），只需 nix/gh/pnpm/node 可达 —— runner
 #     service 的 PATH 很小，由 Fix PATH 步骤补齐。
-#   - 安全纪律：全文件无任何明文 key。LLM key 只经 repo secret OPENCODE_API_KEY
+#   - 安全纪律：全文件无任何明文 key。LLM key 只经 repo secret DEEPSEEK_API_KEY
 #     注入（Run verify-runner 步骤 env）；provider 配置用 apiKeyEnv 引用同名环境
 #     变量（见 ci/settings.ci.yaml）。
 
@@ -81,7 +81,7 @@ jobs:
 
       - name: Check toolchain, local prerequisites and secret
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}   # 仅做非空检查，绝不回显
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}   # 仅做非空检查，绝不回显
         run: |
           set -euo pipefail
           for tool in nix gh pnpm node; do
@@ -105,8 +105,8 @@ jobs:
                    "dsh-plugin/verify-runner/ci/bootstrap-persistent-root.sh"
               exit 1; }
           done
-          [ -n "$OPENCODE_API_KEY" ] || {
-            echo "::error::repo secret OPENCODE_API_KEY 未配置（人工闸门 ②）"; exit 1; }
+          [ -n "$DEEPSEEK_API_KEY" ] || {
+            echo "::error::repo secret DEEPSEEK_API_KEY 未配置（人工闸门 ②）"; exit 1; }
 
       - name: Resolve PR context
         env:
@@ -209,7 +209,7 @@ jobs:
           DSH_LOCAL="$RUNNER_TEMP/dsh-home"
           mkdir -p "$DSH_LOCAL"
           # Phase 0 教训：CI 的 DSH_HOME 是全新的，没有这份 settings.yaml LLM 解析
-          # 起不来。文件不含 key，key 只经 OPENCODE_API_KEY 环境变量注入。
+          # 起不来。文件不含 key，key 只经 DEEPSEEK_API_KEY 环境变量注入。
           cp "$DSH_PLUGIN_DIR/verify-runner/ci/settings.ci.yaml" "$DSH_LOCAL/settings.yaml"
           echo "DSH_HOME=$DSH_LOCAL" >> "$GITHUB_ENV"
 
@@ -238,7 +238,7 @@ jobs:
       #   VERDICT: FAIL 或解析不到 VERDICT → exit 1（job 红，宁红不假绿）。
       - name: Run verify-runner
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}   # zen go / qwen3.8-flash
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}   # deepseek 原生 / deepseek-v4-flash
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERIFY_STDOUT: ${{ runner.temp }}/verify-stdout.log
           VERIFY_STDERR: ${{ runner.temp }}/verify-stderr.log
