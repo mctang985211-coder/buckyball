@@ -272,6 +272,8 @@ jobs:
       # 变红），再对捕获的 stdout 解析 VERDICT 裁决本步骤退出码：
       #   首个 ^VERDICT: (PASS|FAIL) 行 → PASS 且会话 exit 0 → 本步骤 exit 0（job 绿）；
       #   VERDICT: FAIL 或解析不到 VERDICT → exit 1（job 红，宁红不假绿）。
+      #   2026-09-06 起 stdout 解析不到时回退本 run 时间窗内的 PR 评论/评审首行
+      #   VERDICT（deepseek 推理-only 收尾会让最终回答不到 stdout，run 33987743069）。
       - name: Run verify-runner
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}   # deepseek 原生 / deepseek-v4-flash
@@ -306,8 +308,34 @@ jobs:
               exit 1
               ;;
             *)
-              echo "::error::no 'VERDICT: PASS|FAIL' line found in headless output -- treated as FAIL (no fake green)"
-              exit 1
+              # 2026-09-06 缺口修复（phase4 演练 run 33987743069 实证）：deepseek 路由偶发
+              # 推理-only 收尾——会话 exit 0、报告已成功贴上 PR，但最终回答不到 stdout，
+              # stdout grep 假阴性。回退：取本 run 时间窗内（createdAt >= 本 run 创建时刻，
+              # 排除历史轮次陈旧结论）PR comments ∪ reviews 的首行 VERDICT 作结论来源。
+              echo "verdict-gate: no VERDICT line in headless stdout; falling back to this-run PR verdict"
+              RUN_CREATED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+              LINE=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
+                --jq --arg since "$RUN_CREATED" \
+                '[.comments[],.reviews[] | select(.createdAt >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | last // empty')
+              VERDICT=$(printf '%s\n' "$LINE" | sed -n -E 's/^VERDICT:[[:space:]]*(PASS|FAIL).*/\1/p')
+              echo "verdict-gate fallback: PR #$PR this-run VERDICT=${VERDICT:-<none>} (window since $RUN_CREATED)"
+              case "$VERDICT" in
+                PASS)
+                  if [ "$DSH_RC" -ne 0 ]; then
+                    echo "::error::VERDICT says PASS (PR fallback) but dsh session exited ${DSH_RC} -- failing (no fake green)"
+                    exit 1
+                  fi
+                  echo "verdict-gate: PASS (via this-run PR comment fallback) -- job green"
+                  ;;
+                FAIL)
+                  echo "::error::VERDICT: FAIL (via this-run PR comment fallback) -- verification failed (see the PR comment)"
+                  exit 1
+                  ;;
+                *)
+                  echo "::error::no 'VERDICT: PASS|FAIL' line in headless output nor in this-run PR comments -- treated as FAIL (no fake green)"
+                  exit 1
+                  ;;
+              esac
               ;;
           esac
           # ==== verdict-gate END ====
