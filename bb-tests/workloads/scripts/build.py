@@ -15,6 +15,7 @@ _MODELS: dict[str, tuple[str, str]] = {
     "yolo": ("yolo26", "buddy-buckyball-yolo26-run"),
     "bert": ("bert", "buddy-buckyball-bert-run"),
     "distilbert": ("distilbert", "buddy-buckyball-distilbert-run"),
+    "berttiny": ("berttiny", "buddy-buckyball-berttiny-run"),
     "qwen3": ("qwen3", "buddy-buckyball-qwen3-run"),
     "gemma4": ("gemma4", "buddy-buckyball-gemma4-run"),
     "deepseekr1": ("deepseekr1", "buddy-buckyball-deepseekr1-run"),
