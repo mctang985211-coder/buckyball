@@ -282,13 +282,15 @@ jobs:
           VERIFY_STDERR: ${{ runner.temp }}/verify-stderr.log
         run: |
           cd /home/ROXY/code/deepseek-harness
-          # 2026-09-06：actions/runner 向 job 环境自动追加 loopback bypass，no_proxy
-          # 尾部含带方括号的 IPv6 字面量 `[::1]`；httpx 0.28.1 构造 Client 解析它即崩
-          # （InvalidURL: Invalid port ':1]'），一切 HF 网络路径必死（run 33989403205 /
-          # 33989896357 两轮实证 + verifier 逐项 bisect）。步骤级重写为无括号形式
-          # （保留 ::1 语义；job 级 env 键不区分大小写、双写会被 GitHub 拒，故 shell 导出）。
-          export NO_PROXY=localhost,127.0.0.1,::1
-          export no_proxy=localhost,127.0.0.1,::1
+          # 2026-09-06：HF 网络路径在 CI 必死——harness http-proxy policy
+          # （packages/util/http-proxy/src/policy.ts:321 withLoopback）给下游子进程
+          # 重写 no_proxy 并追加带方括号的 `[::1]`，httpx 0.28.1 解析它即崩
+          # （InvalidURL: Invalid port ':1]'；run 33989403205/33989896357/33990723390
+          # 三轮实证 + verifier 逐项 bisect；步骤级 export 治标无效——harness 会重写）。
+          # CI 模型缓存一律预置（~/.cache/huggingface），故直接全程离线：huggingface_hub
+          # 离线模式在构造 HTTP 客户端之前短路，坏 no_proxy 根本不会被解析。
+          # 后果语义：模型未预置时报 OfflineModeIsEnabled（确定性失败），不会走网络。
+          export HF_HUB_OFFLINE=1
           # dsh headless 的进程退出码只反映会话是否正常完成（completed → 0），
           # 不反映 PASS/FAIL（src/prompt.ts 约定）；结论由最终回答的 VERDICT 行表达。
           set +e
