@@ -223,7 +223,7 @@ class LayerNorm(val b: GlobalConfig) extends Module {
   // ---------------------------------------------------------------------
   private def rsqrtNewton(inIeee: UInt): UInt = {
     val e        = inIeee(30, 23)
-    val half     = (e.zext(9).asSInt - 126.S) >> 1 // floor((e-126)/2) = ceil(E/2)
+    val half     = (e.zext - 126.S) >> 1 // floor((e-126)/2) = ceil(E/2)
     val seedIeee = Cat(0.U(1.W), (127.S - half)(7, 0), 0.U(23.W))
     val vR       = f2r(inIeee)
     val k = {
