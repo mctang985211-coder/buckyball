@@ -11,6 +11,8 @@ tests = [
   "pebble-pebble-ctest-im2col_window_test-linux",
   "pebble-pebble-ctest-mega_conv_pipeline_test-linux",
   "pebble-pebble-ctest-int8mul_test-linux",
+  "pebble-pebble-ctest-layernorm_test-linux",
+  "pebble-pebble-ctest-layernorm_bank_test-linux",
   "pebble-pebble-mlirtest-ball_smatmul_bias_accumulate-linux",
   "pebble-pebble-mlirtest-bank_smatmul_bias_accumulate-linux",
   "pebble-pebble-mlirtest-ball_quant_f32_to_i8-linux",
@@ -23,4 +25,6 @@ tests = [
   "pebble-pebble-mlirtest-bank_int2fp_relu_4x4-linux",
   "pebble-pebble-mlirtest-tile_mega_matmul-linux",
   "pebble-pebble-mlirtest-tile_mega_conv2d-linux",
+  "pebble-pebble-mlirtest-bank_layernorm_4x4-linux",
+  "pebble-pebble-mlirtest-ball_layernorm_4x4-linux",
 ]
