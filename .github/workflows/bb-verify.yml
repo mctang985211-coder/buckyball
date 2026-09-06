@@ -53,11 +53,11 @@
 #     排它，消费方（人 / dsh / 路线图）见 INFRA 应**重发 dispatch** 而非读作验证结果。
 #   - report 伴生作业（hosted ubuntu-latest）：覆盖 runner 已死、verify 作业内的 3b 步根本
 #     跑不到的场景，见下。verify 与 report 复用同一 marker 幂等，至多一条 INFRA 评论。
-#   - **「至多一条」是无条件的，去重键 = run_id**（2026-09-07 受控红后定稿）：marker 只含
-#     `run=<id>`，attempt 记在评论正文里做审计。所以同一条 run 全程最多一条 INFRA，重跑
-#     （attempt+1）走 PATCH 更新同一条、正文更新而非再贴。写路径分工：机内回流步有
-#     per-step tee 日志 = 权威归因人；hosted report 只在「机内没贴上」时独立贴，且面对已有
-#     条目时**只升级占位错误行、绝不覆盖已锚定好的归因**（扁平 job 日志没有可靠的步边界）。
+#   - **「至多一条」是无条件的，去重键 = run_id**：marker 只含 `run=<id>`，attempt 记在评论正文
+#     里做审计。所以同一条 run 全程最多一条 INFRA，重跑（attempt+1）走 PATCH 更新同一条、正文更新
+#     而非再贴。写路径分工：机内回流步有 per-step tee 日志 = 权威归因人；hosted report 只在「机内
+#     没贴上」时独立贴，且面对已有条目时**只升级占位错误行、绝不覆盖已锚定好的归因**——扁平 job
+#     日志切不出步边界（该分工的受控红事故实录见 DELIVERY.md §15）。
 #   - **消费方全景 5 处，第 5 处刻意不对称**：workflow 内 4 处（verdict-gate grep / stdout
 #     解析后的 PR 回退查询 / 评论在场门禁 / 两处站开探测都只认 PASS|FAIL），外加
 #     scripts/bb-verify-watchdog.sh 的「completed 无结论」判据认 PASS|FAIL|**INFRA**——因为
@@ -252,11 +252,28 @@ jobs:
           mkdir -p "$RUNNER_TEMP/steplogs"
           exec 2> >(tee "$RUNNER_TEMP/steplogs/verdict_inputs.log" >&2)
           SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
+          # infer-stage 先单独落盘：它的输出既进 task-prompt.md 判定块（[stage] 段），又被下面
+          # 抽 compilerTouched 写进 $GITHUB_OUTPUT——这是 Provision 编译器构建处置（continue-on-error
+          # + workload same-flag-skip）的打通点，见下方 provision_compiler 步骤的推演注记。
+          STAGE_BLOCK="$RUNNER_TEMP/infer-stage.out"
+          node "$SCRIPTS/infer-stage.mjs" --context pr-context.json > "$STAGE_BLOCK"
+          # 从 [stage] 段的 compilerTouched 行抽布尔；infer-stage.main() 无条件打这一行
+          # （值为 JS 布尔 true/false），格式 `  compilerTouched: <bool>（...`。
+          COMPILER_TOUCHED=$(sed -n -E 's/^[[:space:]]*compilerTouched:[[:space:]]*(true|false).*/\1/p' "$STAGE_BLOCK")
+          # 抽不到 = 判定块格式破防（infer-stage 崩溃或输出面改了），按「判定管线故障宁红」
+          # 契约直接红，绝不静默当成 compilerTouched=false 放行（那会让编译器写集弄炸重新退化成
+          # Provision 先红 → INFRA → 重发复现的死循环，正是本打通要消除的对象）。
+          case "$COMPILER_TOUCHED" in
+            true|false) : ;;
+            *) echo "::error::无法从 infer-stage 输出抽出 compilerTouched（got '${COMPILER_TOUCHED:-<empty>}'）—— 判定管线故障，宁红不假绿"; exit 1 ;;
+          esac
+          echo "compiler_touched=$COMPILER_TOUCHED" >> "$GITHUB_OUTPUT"
+          echo "verdict_inputs: compilerTouched=$COMPILER_TOUCHED → \$GITHUB_OUTPUT（provision_compiler 处置依据）"
           { echo "验证 PR #$PR。验证层级：$LAYER（merge=门禁层；complete=重验证）。PR 上下文（含描述中的证据清单）如下："
             cat pr-context.json
             echo
             echo "===== CI 确定性判定（脚本注入，直接消费，不得重新判定）====="
-            node "$SCRIPTS/infer-stage.mjs" --context pr-context.json
+            cat "$STAGE_BLOCK"
             node "$SCRIPTS/validate-manifest.mjs" --context pr-context.json --repo-root "$BB_VERIFY_ROOT"
             node "$SCRIPTS/binding-check.mjs" --context pr-context.json --repo-root "$BB_VERIFY_ROOT"
             node "$SCRIPTS/slices-verify.mjs" --context pr-context.json
@@ -273,6 +290,11 @@ jobs:
       # 管道会让 `ls` 以 EPIPE 退出造成假失败（run 33264657589 教训）。
       - name: Provision persistent root (nix build + bbdev config/compiler/workload)
         id: provision
+        env:
+          # P0 打通：compilerTouched 由前置的 Deterministic verdict inputs 步从 infer-stage 输出
+          # 抽出并写进 $GITHUB_OUTPUT（compiler_touched）。true = 本 PR 累计写集触及 ball/core 的
+          # compiler/**，编译器构建本身是门禁轮要裁决的内容，不是 CI 基建。
+          COMPILER_TOUCHED: ${{ steps.verdict_inputs.outputs.compiler_touched }}
         run: |
           set -euo pipefail
           # tee 到 per-step 日志供失败回流；exec 重定向不参与判定（内层 set -euo pipefail 保持）。
@@ -290,16 +312,55 @@ jobs:
             process.stdout.write(chip !== undefined && existsSync(`${process.env.BB_VERIFY_ROOT}/examples/chips/${chip}`) ? chip : "toy")
           ')
           echo "provision chip=${PROVISION_CHIP}（仅热树预热；验证序列的 chip 以判定块注入值为准）"
+          echo "compilerTouched=${COMPILER_TOUCHED:-<unset>}（verdict_inputs 步 compiler_touched 输出；决定编译器构建失败是否降级为门禁轮裁决）"
           echo "::group::nix build"; time nix build; echo "::endgroup::"
           echo "::group::bbdev config --install"
           time nix develop -c bbdev config --install
           echo "::endgroup::"
-          echo "::group::bbdev compiler --build (incremental)"
-          time nix develop -c bbdev compiler --build "--chip ${PROVISION_CHIP}"
-          echo "::endgroup::"
+          # —— 编译器构建处置（P0 反 INFRA 死循环）——
+          # 推演：编译器写集被本 PR 弄炸时，若照旧让 compiler --build 的非零退出直接判红整步，
+          #   就变成「Provision 先红 → 回流 VERDICT: INFRA → 消费方重发 dispatch → 门禁轮又撞到
+          #   同一个编译器错」的死循环——可编译器构建本就是门禁轮要裁决的**验证内容**，不是基建。
+          # 因此只在 compilerTouched=true 时把编译器构建失败降级：用 set +e 捕获 rc、本步保持绿、
+          #   末尾 echo 明确注记交门禁轮裁决（注记进 provision.log 与 Actions 日志，可见）。
+          # 为什么不用步级 continue-on-error: true：continue-on-error 是整步属性，若在
+          #   compilerTouched=true 时置真，会连 nix build / config --install 的真基建失败一起吞掉
+          #   （它们与编译器写集无关，必须真红）；且 run 块首行 set -euo pipefail，构建一 non-zero
+          #   就中断，continue-on-error 只会让「已中断的步」显示为忽略错，末尾注记根本跑不到。
+          #   故沿用 Run verify-runner 步骤的 set +e / rc=$? / set -e 捕获范式，做到「本步仍绿、
+          #   注记必达、且只豁免编译器这一条命令」。
+          COMPILER_RC=0
+          if [ "${COMPILER_TOUCHED:-false}" = "true" ]; then
+            echo "::group::bbdev compiler --build (incremental；compilerTouched=true → 失败交门禁轮裁决)"
+            set +e
+            time nix develop -c bbdev compiler --build "--chip ${PROVISION_CHIP}"
+            COMPILER_RC=$?
+            set -e
+            if [ "$COMPILER_RC" -ne 0 ]; then
+              echo "编译器构建失败交由门禁轮裁决（compilerTouched=true：本 PR 触及 ball/core 的" \
+                   "compiler/**，编译器构建是门禁轮要裁决的验证内容而非 CI 基建；exit=${COMPILER_RC}）。"
+            fi
+            echo "::endgroup::"
+          else
+            echo "::group::bbdev compiler --build (incremental)"
+            time nix develop -c bbdev compiler --build "--chip ${PROVISION_CHIP}"
+            echo "::endgroup::"
+          fi
+          # —— workload 处置（same-flag-skip，只豁免不降级）——
+          # 推演：workload clean/build 依赖编译器产物。compiler 炸了 workload 必炸（同一错，
+          #   重跑只会把门禁轮已接手的裁决再预演一遍并可能报红），但 workload 炸了不代表 compiler
+          #   炸——所以只有「本轮 compilerTouched=true 且编译器确实构建失败」时才 same-flag-skip
+          #   workload；compiler 成功（无论 touched 与否）或 touched=false 时 workload 照旧跑且其
+          #   非零退出真红（裸命令在 set -e 下），因为那不再是编译器写集问题的连带。
           echo "::group::bbdev workload --clean + --build (incremental)"
-          time nix develop -c bbdev workload --clean "--chip ${PROVISION_CHIP}"
-          time nix develop -c bbdev workload --build "--chip ${PROVISION_CHIP}"
+          if [ "$COMPILER_RC" -ne 0 ]; then
+            echo "workload --clean/--build skipped（same-flag-skip）：编译器构建本轮已失败并交由门禁轮" \
+                 "裁决，workload 构建依赖编译器产物，继续跑必然撞同一个编译器错、且会把门禁轮的裁决面" \
+                 "提前预演成 Provision 红——跳过以保持「编译器问题只在门禁轮裁一次」的单一通道。"
+          else
+            time nix develop -c bbdev workload --clean "--chip ${PROVISION_CHIP}"
+            time nix develop -c bbdev workload --build "--chip ${PROVISION_CHIP}"
+          fi
           echo "::endgroup::"
 
       - name: Stage dsh-plugin from the local checkout and build verify-runner
@@ -616,7 +677,11 @@ jobs:
               [ -n "$cand" ] && { ERR="$cand"; echo "report-ci-error: error line from fallback glob $(basename "$lf")"; break; }
             done
           fi
-          [ -n "$ERR" ] || ERR="(no matching error line captured in tee'd step logs; open the run for the raw tail)"
+          # 占位错误行的识别改走隐藏 marker（不再靠自然语言措辞 grep，措辞一变识别就静默失效）：
+          # 本步若落到占位串，就在评论体里追加 `<!-- bb-verify:err-line placeholder -->`，
+          # hosted 侧据此判断「既有条目还是占位、值得升级」。两处产出侧（机内 + hosted）打同一 marker。
+          ERR_PLACEHOLDER=0
+          [ -n "$ERR" ] || { ERR="(no matching error line captured in tee'd step logs; open the run for the raw tail)"; ERR_PLACEHOLDER=1; }
           # 评论体是 markdown（不是日志），::name:: 在这里不会被解析成注解，故**不**改写错误行
           # 内容——保持原样才利于归因；只截断超长行，避免评论爆炸（hosted report 作业同口径）。
           ERR="${ERR:0:400}"
@@ -634,6 +699,9 @@ jobs:
           printf -- '- 来源：机内回流步（verify 作业内，有 per-step tee 日志，归因权威）\n' >> "$BODYF"
           printf -- '- 语义：VERDICT: INFRA 与 PASS/FAIL 三处门禁正则排它；此结论只表示 runner/CI 侧异常。\n' >> "$BODYF"
           printf '\n%s\n' "$MARKER" >> "$BODYF"
+          # 占位错误行时追加隐藏 marker（ERR_PLACEHOLDER 已在取错误行那一段置位）；hosted 侧靠
+          # 它区分「既有条目还是占位、可升级」与「已锚定好归因、绝不降级」。非占位则不打此 marker。
+          [ "$ERR_PLACEHOLDER" = "1" ] && printf '%s\n' "<!-- bb-verify:err-line placeholder -->" >> "$BODYF"
           # 5) 幂等：**按 run 去重**（marker 只含 run=，attempt 写在正文里做审计）。已有同 run 的
           #    INFRA 条目 → PATCH 同一条、正文更新而非再贴（重跑 attempt+1 走的就是这支）；本步
           #    有机内 per-step 日志，归因一定不比 hosted 侧差，所以这里可以无条件 PATCH。
@@ -659,9 +727,10 @@ jobs:
   #   needs: verify + if: always()，只用 API（gh）读 verify 的 job/steps 快照与日志，绝不碰
   #   持久根、不占本机 runner slot。判据：verify 终态但本轮时间窗内 PR 无任何 ^VERDICT:(PASS|FAIL)
   #   结论（既非绿也无 FAIL 评论）→ 贴 VERDICT: INFRA（首条 ::error::/error: 行 + job 链接）。
-  #   幂等：与 3b 复用同一 marker（只含 run=）——机内已贴过就**不重复贴**，且只有「机内那条的
-  #   错误行是占位串、而本作业从日志里真拉到了错误行」时才 PATCH 升级；否则原样保留（绝不把
-  #   机内步锚定好的归因降级）。成功路径（有真 PASS）直接跳过。
+  #   幂等：与 3b 复用同一 marker（只含 run=）——机内已贴过就**不重复贴**，且只有「机内那条带占位
+  #   marker、而本作业从日志里真拉到了错误行」时才 PATCH 升级；否则原样保留（绝不把机内步锚定好的
+  #   归因降级——扁平 job 日志切不出步边界，受控红事故实录见 DELIVERY.md §15）。成功路径（有真 PASS）
+  #   直接跳过。
   report:
     runs-on: ubuntu-latest
     needs: verify
@@ -721,12 +790,10 @@ jobs:
           fi
           STEPFAIL="${STEPFAIL:-the verify job (runner may have died; job conclusion=$VER_CONC)}"
           # 3) 从 verify 日志取首条真错误行（gh api 拉 job 日志；失败则留空，仍贴带链接的 INFRA）。
-          #    两条受控红实证过的口径（2026-09-07，run 34053805262）：
-          #    ① job 日志在 job 结束后**几秒内可能还没上传完**（本例 report 作业起在 verify
-          #      完成 4s 后，首拉为空 → 错误行退化成占位串），故带重试地拉；
-          #    ② 扁平 job 日志里**没有可靠的步边界**：`##[group]` 头是脚本的**第一行**而非步名
-          #      （本 workflow 四个步都以 `Run set -euo pipefail` 开头，切不出失败步片段）；
-          #      而全文扫描的**第一条** error 形行往往是 runner 回显的 workflow 自身源码
+          #    两条口径（事故实录见 DELIVERY.md §15）：
+          #    ① job 日志在 job 结束后几秒内可能还没上传完，故带重试地拉（见第 4 段 for 循环）；
+          #    ② 扁平 job 日志切不出步边界——`##[group]` 头是脚本第一行而非步名，切不出失败步片段；
+          #      而全文扫描的第一条 error 形行往往是 runner 回显的 workflow 自身源码
           #      （`echo "::error::..."` 那些行），所以先剥掉回显前缀 `\x1b[36;1m` 的行。
           #    归因精度靠机内步（有 per-step tee 日志）；hosted 侧只在机内步没贴上时才算独立
           #    报告人，见第 5 步的站开/PATCH 分工。
@@ -736,9 +803,8 @@ jobs:
           strip_ansi() { sed -r 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
           ERR_RE='(::error::|[Ee]rror:|FAILED:|ninja: build stopped|CMake Error|Traceback|command not found|not on PATH|PRE-FAIL)'
           if [ -n "$VER_JOB_ID" ]; then
-            # 重试窗口 = 6 × 20s ≈ 2min：受控红 run 34055042926 实证 job 日志在 verify 结束后
-            # 45s 内三次单发拉取全为空（同一份日志几分钟后本地拉即 41KB），自助 runner 的日志
-            # 上传有分钟级延迟；report 作业本身有 15min timeout，等得起。失败原因一律打进日志
+            # 重试窗口 = 6 × 20s ≈ 2min：自助 runner 的 job 日志上传有分钟级延迟（job 结束后
+            # 数十秒内首拉常为空），report 作业本身有 15min timeout，等得起。失败原因一律打进日志
             # （gh 的 stderr 落文件再回显），不再静默吞掉。
             for try in 1 2 3 4 5 6; do
               gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$VER_JOB_ID/logs" > "$LOGF" 2>"$LOGF.err"
@@ -770,20 +836,20 @@ jobs:
           printf -- '- 来源：hosted report 作业（兜底位；只有扁平 job 日志，无 per-step 边界）\n' >> "$BODYF"
           printf -- '- 语义：VERDICT: INFRA 与 PASS/FAIL 三处门禁正则排它；覆盖 runner 整机已死、机内回流步跑不到的场景。\n\n' >> "$BODYF"
           printf '%s\n' "$MARKER" >> "$BODYF"
-          # 5) 写路径（2026-09-07 受控红 run 34053805262 实证后定的分工）。规则一句话：
+          # 占位错误行（本次没从日志真拉到错误行，ERR_IS_REAL 仍为 0）→ 追加同一隐藏 marker，
+          # 与机内回流步口径一致；重跑 attempt+1 或另一报告人据此识别「这条还是占位、可升级」。
+          [ "$ERR_IS_REAL" = "1" ] || printf '%s\n' "<!-- bb-verify:err-line placeholder -->" >> "$BODYF"
+          # 5) 写路径分工。规则一句话：
           #    - 没有同 marker 的既有条目（机内步没跑到 / runner 整机已死）→ POST，本作业是唯一
           #      报告人，哪怕错误行只是占位串也要贴（有链接的 INFRA 胜过硬空窗）。
-          #    - 已有条目：**只在「既有条目是占位错误行」且「本次拉到了真错误行」时 PATCH**（升级），
-          #      否则原样保留（站开）。踩过的坑：机内步用 per-step tee 日志锚出了正确的错误行，
-          #      而 hosted 侧面对的是**扁平 job 日志**（`##[group]` 头是脚本第一行而非步名，本
-          #      workflow 四个可失败步都以 `Run set -euo pipefail` 开头，切不出步片段；且第一条
-          #      error 形行往往是 runner 回显的 workflow 自身源码，已按 `\x1b[36;1m` 前缀剥掉），
-          #      无条件 PATCH 会把好的归因**降级**——受控红里真发生了（评论 created 19:06:19Z /
-          #      updated 19:06:35Z，最终正文成了 hosted 版）。
+          #    - 已有条目：**只在「既有条目带占位 marker」且「本次拉到了真错误行」时 PATCH**（升级），
+          #      否则原样保留（站开）——扁平 job 日志切不出步边界，hosted 侧看不到机内步的 per-step
+          #      tee 锚定，无条件 PATCH 只会把好归因降级。事故实录见 DELIVERY.md §15。
           EXIST=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
             | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID" \
+              --arg ph "<!-- bb-verify:err-line placeholder -->" \
               '[ .[][] | select(.body | contains($m)) ] | (last // empty)
-               | "\(.id // "")\t\((.body | test("no (matching|explicit) error line")) | tostring)"')
+               | "\(.id // "")\t\((.body | contains($ph)) | tostring)"')
           EXIST_ID="${EXIST%%$'\t'*}"; EXIST_PLACEHOLDER="${EXIST##*$'\t'}"
           if [ -n "$EXIST_ID" ]; then
             if [ "$EXIST_PLACEHOLDER" = "true" ] && [ "$ERR_IS_REAL" = "1" ]; then
