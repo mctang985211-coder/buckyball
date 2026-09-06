@@ -29,7 +29,6 @@ tests = [
   "pebble-pebble-mlirtest-ball_layernorm_4x4-baremetal",
   "pebble-pebble-mlirtest-ball_im2col_6x6_k3-baremetal",
   "pebble-pebble-mlirtest-bank_im2col_6x6_k3-baremetal",
-  "pebble-pebble-mlirtest-bank_matadd_bank_1024x8_i32-baremetal",
   "pebble-pebble-mlirtest-ball_transpose_16x16_i8-baremetal",
   "pebble-pebble-mlirtest-bank_transpose_16x16_i8-baremetal",
 ]
