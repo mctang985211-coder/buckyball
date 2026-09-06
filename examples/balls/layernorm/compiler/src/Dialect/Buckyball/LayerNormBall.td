@@ -36,7 +36,11 @@ def BankLayerNormOp : Buckyball_Op<"bank_layernorm"> {
       "type($inBank) type($paramBank) type($outBank) type($rows) type($cols)";
 }
 
-def LayerNormIntrOp : Buckyball_IntrOpBase<"layernorm">,
-  Arguments<(ins LLVM_Type, LLVM_Type)>;
+// No LLVM-export op is declared here: an LLVM_IntrOpBase op would emit an
+// unconditional llvm::Intrinsic::riscv_bb_<mnemonic> reference from
+// `-gen-llvmir-conversions`, and the LLVM fork hardcodes the pebble per-core
+// op set, which cannot be extended per ball.  LAYERNORM is emitted through
+// the generic CustomIntrOp path instead
+// (see Transforms/LegalizeForLLVMExport.cpp).
 
 #endif // LAYERNORMBALL_OPS

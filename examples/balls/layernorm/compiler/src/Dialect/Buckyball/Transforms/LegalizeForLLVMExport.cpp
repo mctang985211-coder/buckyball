@@ -29,11 +29,16 @@ static LogicalResult validateLayerNorm(Operation *op, Value rows, Value cols,
   return success();
 }
 
+// LayerNormBall has no LLVM-export op: the LLVM fork hardcodes the pebble
+// per-core op set, so no per-ball op name can be declared for LAYERNORM.
+// Both ops therefore lower through the generic CustomIntrOp path - rs2
+// carries cols, funct7 is resolved from the ball ISA registry at compile
+// time - exactly like MatAddBall.  The bank-level op is consumed by the
+// assign-physical-banks pass before this stage; keeping it illegal here
+// fail-hards any bank op that survived assignment.
 struct LayerNormLowering : public ConvertOpToLLVMPattern<LayerNormOp> {
-  LayerNormLowering(LLVMTypeConverter &converter, bool stable,
-                    int64_t bankDepth)
-      : ConvertOpToLLVMPattern<LayerNormOp>(converter), stable(stable),
-        bankDepth(bankDepth) {}
+  LayerNormLowering(LLVMTypeConverter &converter, int64_t bankDepth)
+      : ConvertOpToLLVMPattern<LayerNormOp>(converter), bankDepth(bankDepth) {}
 
   LogicalResult
   matchAndRewrite(LayerNormOp op, OpAdaptor adaptor,
@@ -45,10 +50,6 @@ struct LayerNormLowering : public ConvertOpToLLVMPattern<LayerNormOp> {
     Value rs1 = packRs1BanksIter(rewriter, loc, adaptor.getInputBankId(),
                                  adaptor.getParamBankId(),
                                  adaptor.getOutputBankId(), adaptor.getRows());
-    if (stable) {
-      rewriter.replaceOpWithNewOp<LayerNormIntrOp>(op, rs1, adaptor.getCols());
-      return success();
-    }
     rewriter.replaceOpWithNewOp<CustomIntrOp>(
         op, rs1, adaptor.getCols(),
         rewriter.getI32IntegerAttr(
@@ -57,57 +58,19 @@ struct LayerNormLowering : public ConvertOpToLLVMPattern<LayerNormOp> {
   }
 
 private:
-  bool stable = false;
-  int64_t bankDepth;
-};
-
-struct BankLayerNormLowering : public ConvertOpToLLVMPattern<BankLayerNormOp> {
-  BankLayerNormLowering(LLVMTypeConverter &converter, bool stable,
-                        int64_t bankDepth)
-      : ConvertOpToLLVMPattern<BankLayerNormOp>(converter), stable(stable),
-        bankDepth(bankDepth) {}
-
-  LogicalResult
-  matchAndRewrite(BankLayerNormOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    buckyball_target::requireBuckyballBall("LayerNormBall");
-    Location loc = op.getLoc();
-    if (failed(validateLayerNorm(op, op.getRows(), op.getCols(), bankDepth)))
-      return failure();
-    Value rs1 = packRs1BanksIter(rewriter, loc, adaptor.getInBank(),
-                                 adaptor.getParamBank(), adaptor.getOutBank(),
-                                 adaptor.getRows());
-    if (stable) {
-      rewriter.replaceOpWithNewOp<LayerNormIntrOp>(op, rs1, adaptor.getCols());
-      return success();
-    }
-    rewriter.replaceOpWithNewOp<CustomIntrOp>(
-        op, rs1, adaptor.getCols(),
-        rewriter.getI32IntegerAttr(
-            buckyball_target::getBuckyballFunct7("LAYERNORM")));
-    return success();
-  }
-
-private:
-  bool stable = false;
   int64_t bankDepth;
 };
 } // namespace
 
 namespace mlir::buddy::buckyball {
 void populateLayerNormBallLegalizeForLLVMExportPatterns(
-    LLVMTypeConverter &converter, RewritePatternSet &patterns, bool stable,
+    LLVMTypeConverter &converter, RewritePatternSet &patterns, bool,
     int64_t bankDepth, bool) {
-  patterns.add<LayerNormLowering>(converter, stable, bankDepth);
-  patterns.add<BankLayerNormLowering>(converter, stable, bankDepth);
+  patterns.add<LayerNormLowering>(converter, bankDepth);
 }
 
 void configureLayerNormBallLegalizeForExportTarget(LLVMConversionTarget &target,
-                                                   bool stable) {
-  if (stable)
-    target.addLegalOp<LayerNormIntrOp>();
-  else
-    target.addIllegalOp<LayerNormIntrOp>();
+                                                   bool) {
   target.addIllegalOp<LayerNormOp, BankLayerNormOp>();
 }
 } // namespace mlir::buddy::buckyball
