@@ -1,5 +1,11 @@
 # bb-verify — verify-runner CI workflow（Phase 3：持久化 CI 工作区模式）
 #
+# ⚠ 定位声明（合规审计 2026-09-06）：本文件与其同目录的 bootstrap-persistent-root.sh /
+#   runner-setup.md 是 **fork/本机部署物料，不是上游交付物**。上游 DangoSys/buckyball 里没有
+#   bb-verify.yml；本 workflow 的上游对照物只有两份：.github/workflows/check.yaml 与
+#   .github/workflows/regression.yml（本次审计 pin = 9bb40565）。凡与本文件冲突的上游事实，
+#   以那两份为准；本文件出现的本机路径 / label / secret 名 / 持久化根都是这台机器的部署细节。
+#
 # Phase 3 变更（2026-08-30，对齐上游 .github/workflows/check.yaml 的持久化模式）：
 #   验证本体不再在 runner _work 的临时 checkout 里执行，而是固定使用本机持久化根
 #   /home/ROXY/bb-verify/buckyball（由 ci/bootstrap-persistent-root.sh 一次性
@@ -200,24 +206,39 @@ jobs:
             node "$SCRIPTS/slices-verify.mjs" --context pr-context.json
           } > task-prompt.md
 
-      # 每 run 的 provision 序列（= 上游 check.yaml 的 chip-check 顺序，全部在持久
+      # 每 run 的 provision 序列（= 上游 check.yaml:123-126 的 chip-check 顺序，全部在持久
       # 化根内增量执行；2026-08-30 持久化根实测：nix build 4.5s、config --install
       # 15s；compiler/workload 冷树首构耗时见 bootstrap 脚本头注，热树增量远快）。
+      # chip 不再写死 toy：本步骤只是**热树预热**（真正的验证序列由会话侧 bbdev_plan 按
+      # 判定块注入的 chip 生成），但按清单 chip 预热才对那棵 chip 的构建树有用；清单缺失或
+      # 非法（validate-manifest 已 PRE-FAIL）时退回 toy，并在日志里注明这是预热而非判定。
       # 注意不放 `ls result/bin | head -3` 之类调试行 —— pipefail 下 head 提前关闭
-      # 管道会让 ls 以 EPIPE 退出造成假失败（run 33264657589 教训）。
+      # 管道会让 `ls` 以 EPIPE 退出造成假失败（run 33264657589 教训）。
       - name: Provision persistent root (nix build + bbdev config/compiler/workload)
         run: |
           set -euo pipefail
           cd "$BB_VERIFY_ROOT"
+          export SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
+          PROVISION_CHIP=$(node --input-type=module -e '
+            import { readFileSync, existsSync } from "node:fs"
+            const { parseManifest } = await import(`file://${process.env.SCRIPTS}/manifest.mjs`)
+            const body = JSON.parse(readFileSync(`${process.env.GITHUB_WORKSPACE}/pr-context.json`, "utf8")).body
+            const chip = parseManifest(body).chip
+            // 只做预热用 chip 选择：清单没写或该 chip 在树上无实物时退回 toy 并注明，
+            // 判定侧的 chip 缺失由 validate-manifest.mjs 的 PRE-FAIL 负责，不归本步骤。
+            process.stdout.write(chip !== undefined && existsSync(`${process.env.BB_VERIFY_ROOT}/examples/chips/${chip}`) ? chip : "toy")
+          ')
+          echo "provision chip=${PROVISION_CHIP}（仅热树预热；验证序列的 chip 以判定块注入值为准）"
           echo "::group::nix build"; time nix build; echo "::endgroup::"
           echo "::group::bbdev config --install"
           time nix develop -c bbdev config --install
           echo "::endgroup::"
           echo "::group::bbdev compiler --build (incremental)"
-          time nix develop -c bbdev compiler --build '--chip toy'
+          time nix develop -c bbdev compiler --build "--chip ${PROVISION_CHIP}"
           echo "::endgroup::"
-          echo "::group::bbdev workload --build (incremental)"
-          time nix develop -c bbdev workload --build '--chip toy'
+          echo "::group::bbdev workload --clean + --build (incremental)"
+          time nix develop -c bbdev workload --clean "--chip ${PROVISION_CHIP}"
+          time nix develop -c bbdev workload --build "--chip ${PROVISION_CHIP}"
           echo "::endgroup::"
 
       - name: Stage dsh-plugin from the local checkout and build verify-runner
