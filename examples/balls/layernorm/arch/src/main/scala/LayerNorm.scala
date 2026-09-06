@@ -118,10 +118,10 @@ class LayerNorm(val b: GlobalConfig) extends Module {
   val muReg   = RegInit(0.U(recW.W))
   val rstdReg = RegInit(0.U(recW.W))
 
-  private val rowLines = colsReg >> 2                                 // C / 4 lines per row
+  private val rowLines = colsReg >> 2                                // C / 4 lines per row
   private val kc       =
     Mux(colsReg === 4.U, 2.U(4.W), Mux(colsReg === 64.U, 6.U(4.W), Mux(colsReg === 256.U, 8.U(4.W), 9.U(4.W))))
-  private val invCIeee = Cat(0.U(1.W), (127.U - kc)(7, 0), 0.U(23.W)) // exact 1/C
+  private val invCIeee = Cat(0.U(1.W), (127.U(8.W) - kc), 0.U(23.W)) // exact 1/C
 
   // Flat-line decomposition: x/out row r line t sits at flat line
   // L = r*rowLines + t with group L/64 and offset L%64 (regions are
@@ -280,6 +280,11 @@ class LayerNorm(val b: GlobalConfig) extends Module {
           command.op1_bank =/= command.op2_bank && command.op1_bank =/= command.wr_bank &&
             command.op2_bank =/= command.wr_bank,
           "layernorm: x/param/out banks must be pairwise distinct"
+        )
+        assert(
+          command.op1_bank < b.memDomain.bankNum.U && command.op2_bank < b.memDomain.bankNum.U &&
+            command.wr_bank < b.memDomain.bankNum.U,
+          "layernorm: bank ids must be in range"
         )
         assert(
           command.op1_col =/= 0.U && command.op1_col <= b.memDomain.bankNum.U,
