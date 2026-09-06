@@ -417,8 +417,10 @@ jobs:
               # 排除历史轮次陈旧结论）PR comments ∪ reviews 的首行 VERDICT 作结论来源。
               echo "verdict-gate: no VERDICT line in headless stdout; falling back to this-run PR verdict"
               RUN_CREATED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+              # gh pr view --jq 不吃 jq 的 --arg（会把 --arg/since/<值> 当位置参数 → 报
+              # “accepts at most 1 arg”），故 --json 输出管道给真正的 jq 传变量。
               LINE=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
-                --jq --arg since "$RUN_CREATED" \
+                | jq -r --arg since "$RUN_CREATED" \
                 '[.comments[],.reviews[] | select(.createdAt >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | last // empty')
               VERDICT=$(printf '%s\n' "$LINE" | sed -n -E 's/^VERDICT:[[:space:]]*(PASS|FAIL).*/\1/p')
               echo "verdict-gate fallback: PR #$PR this-run VERDICT=${VERDICT:-<none>} (window since $RUN_CREATED)"
@@ -512,7 +514,7 @@ jobs:
           #    → 说明结论已由会话/门禁正常给出，INFRA 不该覆盖它。
           RUN_CREATED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .created_at)
           HAS_VERDICT=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
-            --jq --arg since "$RUN_CREATED" \
+            | jq --arg since "$RUN_CREATED" \
             '[.comments[],.reviews[] | select(.createdAt >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | length')
           if [ "${HAS_VERDICT:-0}" -gt 0 ]; then
             echo "report-ci-error: a real PASS|FAIL verdict already exists in this run's window -- INFRA stands down"
@@ -558,11 +560,11 @@ jobs:
           printf '\n%s\n' "$MARKER" >> "$BODYF"
           # 5) 幂等：同 run+attempt 若已贴过 INFRA（重入），PATCH 更新那一条；否则新建。
           EXIST_ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
-            --jq --arg m "bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT" \
-            '.[] | select(.body | contains($m)) | .id' | tail -1)
+            | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT" \
+            '[ .[][] | select(.body | contains($m)) | .id ] | (last // empty)')
           if [ -n "$EXIST_ID" ]; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
-              -F "body=@$BODYF" >/dev/null \
+              -f "body=@$BODYF" >/dev/null \
               && echo "report-ci-error: PATCHed existing INFRA comment id=$EXIST_ID" \
               || echo "report-ci-error: PATCH failed (best-effort, ignored)"
           else
@@ -605,7 +607,7 @@ jobs:
           # 1) 时间窗内已有真结论 → 不抢通道，直接跳过（含成功路径）。
           RUN_CREATED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .created_at)
           HAS_VERDICT=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
-            --jq --arg since "$RUN_CREATED" \
+            | jq --arg since "$RUN_CREATED" \
             '[.comments[],.reviews[] | select(.createdAt >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | length')
           if [ "${HAS_VERDICT:-0}" -gt 0 ]; then
             echo "report: real PASS|FAIL verdict present in this run's window -- stands down (verify=$VERIFY_STATUS)"
@@ -648,11 +650,11 @@ jobs:
           printf '%s\n' "$MARKER" >> "$BODYF"
           # 5) 幂等：先找同 marker（可能 3b 已贴），有则 PATCH。
           EXIST_ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
-            --jq --arg m "bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT" \
-            '.[] | select(.body | contains($m)) | .id' | tail -1)
+            | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT" \
+            '[ .[][] | select(.body | contains($m)) | .id ] | (last // empty)')
           if [ -n "$EXIST_ID" ]; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
-              -F "body=@$BODYF" >/dev/null \
+              -f "body=@$BODYF" >/dev/null \
               && echo "report: PATCHed existing INFRA comment id=$EXIST_ID" \
               || echo "report: PATCH failed (best-effort)"
           else
