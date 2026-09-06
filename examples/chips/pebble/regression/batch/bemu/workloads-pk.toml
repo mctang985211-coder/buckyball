@@ -27,4 +27,9 @@ tests = [
   "pebble-pebble-mlirtest-tile_mega_conv2d-linux",
   "pebble-pebble-mlirtest-bank_layernorm_4x4-linux",
   "pebble-pebble-mlirtest-ball_layernorm_4x4-linux",
+  "pebble-pebble-mlirtest-ball_im2col_6x6_k3-linux",
+  "pebble-pebble-mlirtest-bank_im2col_6x6_k3-linux",
+  "pebble-pebble-mlirtest-bank_matadd_bank_1024x8_i32-linux",
+  "pebble-pebble-mlirtest-ball_transpose_16x16_i8-linux",
+  "pebble-pebble-mlirtest-bank_transpose_16x16_i8-linux",
 ]
