@@ -736,12 +736,17 @@ jobs:
           strip_ansi() { sed -r 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
           ERR_RE='(::error::|[Ee]rror:|FAILED:|ninja: build stopped|CMake Error|Traceback|command not found|not on PATH|PRE-FAIL)'
           if [ -n "$VER_JOB_ID" ]; then
-            for try in 1 2 3; do
-              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$VER_JOB_ID/logs" > "$LOGF" 2>/dev/null
-              [ -s "$LOGF" ] && break
-              echo "report: verify job log not ready yet (try $try) -- retrying in 15s"
-              sleep 15
+            # 重试窗口 = 6 × 20s ≈ 2min：受控红 run 34055042926 实证 job 日志在 verify 结束后
+            # 45s 内三次单发拉取全为空（同一份日志几分钟后本地拉即 41KB），自助 runner 的日志
+            # 上传有分钟级延迟；report 作业本身有 15min timeout，等得起。失败原因一律打进日志
+            # （gh 的 stderr 落文件再回显），不再静默吞掉。
+            for try in 1 2 3 4 5 6; do
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$VER_JOB_ID/logs" > "$LOGF" 2>"$LOGF.err"
+              if [ -s "$LOGF" ]; then break; fi
+              echo "report: verify job log not ready (try $try): $(head -c 200 "$LOGF.err")"
+              sleep 20
             done
+            rm -f "$LOGF.err"
             [ -s "$LOGF" ] && ERR=$(sed -E '/\x1b\[36;1m/d' "$LOGF" \
               | strip_ansi | grep -aE "$ERR_RE" \
               | sed -E 's/^[0-9T:.-]+Z //; s/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
