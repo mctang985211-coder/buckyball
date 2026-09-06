@@ -1,0 +1,5 @@
+# LayerNorm Ball Configuration
+
+[ball]
+# Epsilon added to the biased variance before rsqrt (torch default, frozen).
+Eps = 1e-12
