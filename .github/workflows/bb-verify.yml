@@ -210,6 +210,7 @@ jobs:
           # 内层 set -euo pipefail 保持——管道首段失败即整步失败）。PR 取自 workflow 级 env。
           mkdir -p "$RUNNER_TEMP/steplogs"
           exec > >(tee "$RUNNER_TEMP/steplogs/prepare.log") 2>&1
+          echo "Error: [drill-decoy] transient noise inside prepare, which succeeded -- must NOT be attributed"  # [drill]
           WANT_SHA=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
           mkdir -p /home/ROXY/bb-verify
           exec 9>/home/ROXY/bb-verify/bb-verify.lock
@@ -250,7 +251,7 @@ jobs:
           # 错误正则会误抓 PR 散文里的 "error:"）。
           mkdir -p "$RUNNER_TEMP/steplogs"
           exec 2> >(tee "$RUNNER_TEMP/steplogs/verdict_inputs.log" >&2)
-          SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
+          SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts-DRILL-BROKEN  # [drill] controlled red
           { echo "验证 PR #$PR。验证层级：$LAYER（merge=门禁层；complete=重验证）。PR 上下文（含描述中的证据清单）如下："
             cat pr-context.json
             echo
