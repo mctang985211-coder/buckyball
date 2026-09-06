@@ -35,7 +35,7 @@
 #     变量（见 ci/settings.ci.yaml）。
 #
 # 2026-09-06 确定性预判改造：stage 推断 / 证据清单 schema 校验 / 模型绑定三源检查 /
-# slices 证据查证由 verify-runner/scripts/ 下四个纯 node 脚本在「Deterministic
+# slices 证据查证 / perf 轮上轮 probe 取证由 verify-runner/scripts/ 下五个纯 node 脚本在「Deterministic
 # verdict inputs」步骤产出并注入 task-prompt.md（prompt.ts 只消费不重新判定）；
 # Run verify-runner 之后新增双门禁：评论在场门禁（comments∪reviews 缺 VERDICT 首行
 # 即红，r4 假绿事故双保险）与只读门禁（会话前后 tracked diff 逐字节比对）。
@@ -53,6 +53,16 @@
 #     排它，消费方（人 / dsh / 路线图）见 INFRA 应**重发 dispatch** 而非读作验证结果。
 #   - report 伴生作业（hosted ubuntu-latest）：覆盖 runner 已死、verify 作业内的 3b 步根本
 #     跑不到的场景，见下。verify 与 report 复用同一 marker 幂等，至多一条 INFRA 评论。
+#   - **「至多一条」的限定（2026-09-07）**：唯一性范围 = 同一 (run_id, run_attempt)。marker
+#     里带 attempt 维度，所以重跑（attempt+1）**会**另起一条 INFRA——这是刻意的：新一轮的失败
+#     因与上一轮可能不同，覆盖旧条目反而丢信息。同 attempt 内的 verify 机内步与 hosted report
+#     作业才互相 PATCH。
+#   - **消费方全景 5 处，第 5 处刻意不对称**：workflow 内 4 处（verdict-gate grep / stdout
+#     解析后的 PR 回退查询 / 评论在场门禁 / 两处站开探测都只认 PASS|FAIL），外加
+#     scripts/bb-verify-watchdog.sh 的「completed 无结论」判据认 PASS|FAIL|**INFRA**——因为
+#     watchdog 的语义是「这条 run 有没有留下任何结论」，INFRA 也算留痕（它已贴则不再补报）；
+#     而 workflow 侧把 INFRA 排除在结论之外，是为了让 hosted report 能 PATCH 机内已贴的那一条。
+#     这个不对称是有意的，两侧各自的正则都不得向对方看齐。
 #   - **单作业原因** = 单 runner slot（本机只有 amax 一台 self-hosted）+ 单一可变持久根
 #     /home/ROXY/bb-verify/buckyball（prepare 里 flock 独占切换检出）+ 单一结论通道
 #     （一个 PR 一次只应有一个 verdict 作者）。这不是「热树不能被多作业复用」——是这三条
@@ -68,11 +78,11 @@ permissions:
   pull-requests: write
   actions: read
 
-# PR 与 head sha 一次算好，供全 job（含 report）复用，替代此前两处
+# PR 号一次算好，供全 job（含 report）复用，替代此前两处
 # `${{ inputs.pr_number || github.event.pull_request.number }}` 重算。
+# （此前的 HEAD_SHA 是死码：全文件无一处引用，检出 sha 由 prepare 步现取现比，故删除。）
 env:
   PR: ${{ inputs.pr_number || github.event.pull_request.number }}
-  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 
 on:
@@ -221,19 +231,23 @@ jobs:
           flock -u 9
           echo "persistent root at $(git -C "$BB_VERIFY_ROOT" log --oneline -1)"
 
-      # 确定性预判（2026-09-06 起，stage/清单/绑定/slices 证据四判定由脚本产出，
+      # 确定性预判（2026-09-06 起，stage/清单/绑定/slices 证据/perf 轮上轮 probe 五判定由脚本产出，
       # 不再是 prompt 恳求）：脚本直接跑本机检出的 verify-runner/scripts（纯 node，
       # 无构建依赖；cp -a staging 在后面的 Stage dsh-plugin 步骤才发生，故此处
       # 引用本机绝对路径而非 $DSH_PLUGIN_DIR）。判定块注入 task-prompt.md 尾部，
       # prompt.ts 只消费不重新判定；validate/binding 的 PRE-FAIL 让会话直接回贴
       # FAIL，省掉一次全批白跑。脚本非零退出 = 判定管线故障 → job 红（宁红不假绿）。
       # 必须在持久化根 prepare 之后跑：清单/绑定的检出树核对以 PR head 为准。
-      - name: Deterministic verdict inputs (stage/manifest/binding/slices)
+      - name: Deterministic verdict inputs (stage/manifest/binding/slices/perf)
         id: verdict_inputs
         run: |
           set -euo pipefail
           # tee 只用于失败回流提取错误行，不参与判定（脚本 stdout 仍进 task-prompt.md，
           # 崩溃栈走 stderr → 进 steplogs/verdict_inputs.log）。内层 set -euo pipefail 保持。
+          # 注：五个判定脚本的 PRE-FAIL 行走 **stdout**（console.log），故只落在
+          # task-prompt.md 里，不在本步 tee 的 stderr 日志里。回流步把 task-prompt.md 列为
+          # 扫描源之一，但对该文件只用 PRE-FAIL 窄正则（文件含整份 pr-context.json，套通用
+          # 错误正则会误抓 PR 散文里的 "error:"）。
           mkdir -p "$RUNNER_TEMP/steplogs"
           exec 2> >(tee "$RUNNER_TEMP/steplogs/verdict_inputs.log" >&2)
           SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
@@ -245,6 +259,7 @@ jobs:
             node "$SCRIPTS/validate-manifest.mjs" --context pr-context.json --repo-root "$BB_VERIFY_ROOT"
             node "$SCRIPTS/binding-check.mjs" --context pr-context.json --repo-root "$BB_VERIFY_ROOT"
             node "$SCRIPTS/slices-verify.mjs" --context pr-context.json
+            node "$SCRIPTS/probe-loop-check.mjs" --context pr-context.json
           } > task-prompt.md
 
       # 每 run 的 provision 序列（= 上游 check.yaml:123-126 的 chip-check 顺序，全部在持久
@@ -374,12 +389,22 @@ jobs:
           # per-lane/per-section 可读性（2026-09-06 加固）：把会话 stdout/stderr 折进可折叠
           # ::group::，并写一份 lane summary（$GITHUB_STEP_SUMMARY）。verdict-gate 读的是
           # $VERIFY_STDOUT 文件本身，不受这里的呈现包装影响。
+          # 转义（2026-09-07）：会话输出会原样进 Actions 日志，而行首的 "::name::" 会被 runner
+          # 解析成 workflow 注解（timestamp 前缀会被日志处理器剥掉后再匹配）——会话报告里引用
+          # PR 散文 / 被验证方工具输出，等于给 PR 内容一个伪造 ::error::、::group::、甚至
+          # ::stop-commands::<token>:: 拆掉整段日志的通道。mask_wf 把行首的命令形（含带参数
+          # 的 `::error file=x::`）改写成 `[name] `：语义不变、注解面失效。只影响呈现，
+          # verdict-gate 读的仍是未加工的 $VERIFY_STDOUT 文件。
+          mask_wf() { sed -E 's/^::([a-zA-Z][a-zA-Z0-9-]*)([[:space:]][^:]*)?::/[\1] /'; }
           echo "::group::verify-runner session stdout"
-          cat "$VERIFY_STDOUT"
+          mask_wf < "$VERIFY_STDOUT"
           echo "::endgroup::"
           echo "::group::verify-runner session stderr"
-          cat "$VERIFY_STDERR" >&2
+          mask_wf < "$VERIFY_STDERR" >&2
           echo "::endgroup::"
+          # step summary 是 markdown：LINE 里的反引号会拆掉本行的 inline code、`|` 会拆表格，
+          # 判定块片段里的 ``` 会提前闭合代码栅栏（→ 后续内容按 markdown 渲染）。呈现前先剥。
+          LINE_SAFE=$(printf '%s' "${LINE:-<none>}" | tr -d '`\r' | tr '|' '/' | cut -c1-120)
           {
             echo "### bb-verify — PR #$PR · layer=$LAYER"
             echo ""
@@ -388,12 +413,16 @@ jobs:
             echo "| dsh session exit | \`$DSH_RC\` |"
             # 判定块（task-prompt.md 尾部）里的 lane 相关行：stage / chip / phase + 本轮
             # verdict，按 lane 语义分组呈现，供人一眼看清这次验证跑的是哪一层哪些 lane。
-            echo "| 本轮 VERDICT (stdout) | \`${LINE:-<none>}\` |"
+            echo "| 本轮 VERDICT (stdout) | \`$LINE_SAFE\` |"
             echo ""
             echo "#### 注入判定块（lane 依据）"
             echo '```'
-            grep -aE '^\[|effective|chip|phase|layer|PRE-FAIL|skippedLanes|VERDICT' \
-              "$GITHUB_WORKSPACE/task-prompt.md" 2>/dev/null | head -60 || true
+            # 注：skippedLanes 分支已删（2026-09-07）——它是 bbdev_plan 的**运行时**返回值，
+            # 只出现在会话输出/PR 报告里，五个判定脚本没有一个把它写进 task-prompt.md，
+            # grep 永远打不中（死分支）。lane 裁剪的呈现归会话报告，不归这里。
+            grep -aE '^\[|effective|chip|phase|layer|PRE-FAIL|VERDICT' \
+              "$GITHUB_WORKSPACE/task-prompt.md" 2>/dev/null | head -60 \
+              | tr -d '\r' | sed -E 's/^ *```.*$//'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY" || true
           # ==== verdict-gate BEGIN ====
@@ -419,9 +448,13 @@ jobs:
               RUN_CREATED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
               # gh pr view --jq 不吃 jq 的 --arg（会把 --arg/since/<值> 当位置参数 → 报
               # “accepts at most 1 arg”），故 --json 输出管道给真正的 jq 传变量。
+              # 时间窗字段必须写 (.createdAt // .submittedAt)：gh pr view 的 **reviews 没有
+              # createdAt**（只有 submittedAt），单取 .createdAt 对 review 恒 null → jq 里
+              # null >= "<串>" 恒 false → review 面的结论永远进不了窗口（2026-09-07 实测
+              # PR #26 的 review 面无 createdAt 键）。comments 侧仍有 createdAt，语义不变。
               LINE=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
                 | jq -r --arg since "$RUN_CREATED" \
-                '[.comments[],.reviews[] | select(.createdAt >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | last // empty')
+                '[.comments[],.reviews[] | select((.createdAt // .submittedAt) >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | last // empty')
               VERDICT=$(printf '%s\n' "$LINE" | sed -n -E 's/^VERDICT:[[:space:]]*(PASS|FAIL).*/\1/p')
               echo "verdict-gate fallback: PR #$PR this-run VERDICT=${VERDICT:-<none>} (window since $RUN_CREATED)"
               case "$VERDICT" in
@@ -448,17 +481,27 @@ jobs:
       # 门禁①（2026-09-06，r4 假绿事故的双保险）：VERDICT 必须真实落在 PR 的
       # comments ∪ reviews 任一面（首行 ^VERDICT: (PASS|FAIL)）——会话自称已贴
       # 不算数；缺即红。verdict-gate 已红的路径不再重复判（本步只在绿路径上跑）。
+      # 时间窗（2026-09-07 补）：与 report/回流步同一口径，只认**本轮**（createdAt //
+      # submittedAt >= 本 run 创建时刻）贴上的结论——查全历史会让上一轮的陈旧 PASS 替
+      # 本轮的漏贴背书（假绿通道）。探测调用失败（拿不到窗口或计数）时按门禁语义**判红**
+      # （宁红不假绿），与站开探测的 fail-closed 方向相反是刻意的：这里红=重发 dispatch，
+      # 那里站开=不抢结论通道。
       - name: "Gate: verdict present on the PR (no fake green)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          RUN_CREATED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          [ -n "$RUN_CREATED" ] || { echo "::error::verdict-presence-gate: cannot read this run's created_at -- failing (no fake green)"; exit 1; }
           COUNT=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
-            --jq '[.comments[].body, .reviews[].body][] | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)")) | "hit"' \
-            | wc -l)
-          echo "verdict-presence-gate: PR #$PR comments∪reviews 首行 VERDICT 条目数 = $COUNT"
+            | jq -r --arg since "$RUN_CREATED" \
+            '[.comments[],.reviews[] | select((.createdAt // .submittedAt) >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | length')
+          case "$COUNT" in
+            ''|*[!0-9]*) echo "::error::verdict-presence-gate: verdict probe failed (got '$COUNT') -- failing (no fake green)"; exit 1;;
+          esac
+          echo "verdict-presence-gate: PR #$PR comments∪reviews 首行 VERDICT 条目数 = $COUNT (window since $RUN_CREATED)"
           if [ "$COUNT" -eq 0 ]; then
-            echo "::error::no 'VERDICT: PASS|FAIL' first line in PR #$PR comments ∪ reviews -- repost failed, failing (no fake green)"
+            echo "::error::no 'VERDICT: PASS|FAIL' first line in PR #$PR comments ∪ reviews **within this run's window** -- repost failed, failing (no fake green)"
             exit 1
           fi
 
@@ -512,16 +555,29 @@ jobs:
           mkdir -p "$RUNNER_TEMP/steplogs"
           # 1) 不抢通道：本 run 时间窗内 PR comments∪reviews 已有 ^VERDICT:(PASS|FAIL) 首行
           #    → 说明结论已由会话/门禁正常给出，INFRA 不该覆盖它。
+          #    fail-closed（2026-09-07）：探测本身失败（拿不到 created_at / jq 非数字输出，
+          #    常见于 API 抖动或限流）时**站开不贴**——「查不到结论」和「确实没有结论」是两件
+          #    事，前者误贴会用 INFRA 盖住一条可能已经存在的真结论（report 作业仍会兜底）。
           RUN_CREATED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .created_at)
+          if [ -z "$RUN_CREATED" ]; then
+            echo "report-ci-error: cannot read this run's created_at (API failure) -- standing down (fail-closed, the hosted report job still covers this)"
+            exit 0
+          fi
           HAS_VERDICT=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
             | jq --arg since "$RUN_CREATED" \
-            '[.comments[],.reviews[] | select(.createdAt >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | length')
-          if [ "${HAS_VERDICT:-0}" -gt 0 ]; then
+            '[.comments[],.reviews[] | select((.createdAt // .submittedAt) >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | length')
+          case "$HAS_VERDICT" in
+            ''|*[!0-9]*)
+              echo "report-ci-error: verdict probe failed (got '$HAS_VERDICT') -- standing down (fail-closed, no INFRA on an unknown)"
+              exit 0;;
+          esac
+          if [ "$HAS_VERDICT" -gt 0 ]; then
             echo "report-ci-error: a real PASS|FAIL verdict already exists in this run's window -- INFRA stands down"
             exit 0
           fi
-          # 2) 认失败步骤：四个可失败步哪个 outcome=failure 就报哪个名；否则归为门禁/其他。
-          STEP=""
+          # 2) 认失败步骤：四个可失败步哪个 outcome=failure 就报哪个名（并记下 step id 供第 3
+          #    步锚定日志）；否则归为门禁/其他。
+          STEP=""; STEP_ID=""
           for pair in "prepare:Prepare persistent repo" \
                       "verdict_inputs:Deterministic verdict inputs" \
                       "provision:Provision persistent root" \
@@ -531,20 +587,37 @@ jobs:
               prepare) oc="$FAILED_PREPARE";; inputs|verdict_inputs) oc="$FAILED_INPUTS";;
               provision) oc="$FAILED_PROVISION";; stage_dsh) oc="$FAILED_STAGE";;
             esac
-            [ "$oc" = "failure" ] && STEP="$label ($id)" && break
+            [ "$oc" = "failure" ] && { STEP="$label ($id)"; STEP_ID="$id"; break; }
           done
           STEP="${STEP:-a verification/gate step (see the failed step in the run)}"
-          # 3) 剥 ANSI 取首条真错误行。优先失败步的 tee 日志，再兜底 job 全局 stdout 痕迹。
+          # 3) 剥 ANSI 取首条真错误行。**先锚定失败步自己的日志**（steplogs/<id>.log），
+          #    无命中才回落到其余 glob —— 旧写法按字母序扫 *.log，prepare.log 永远排在
+          #    verdict_inputs.log 之前，于是一个 verdict_inputs 的失败会被贴成 prepare 的
+          #    某条瞬时 "error:"（张冠李戴，2026-09-07 修）。
           strip_ansi() { sed -r 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
+          ERR_RE='(::error::|^error:|[Ee]rror:|FAILED:|ninja: build stopped|CMake Error|Traceback|\bpanic\b|command not found|not on PATH|PRE-FAIL)'
           ERR=""
-          for lf in "$RUNNER_TEMP"/steplogs/*.log; do
-            [ -f "$lf" ] || continue
-            cand=$(strip_ansi < "$lf" \
-              | grep -aE '(::error::|^error:|[Ee]rror:|FAILED:|ninja: build stopped|CMake Error|Traceback|\bpanic\b|command not found|not on PATH|PRE-FAIL)' \
-              | head -1)
-            [ -n "$cand" ] && { ERR="$cand"; break; }
-          done
+          if [ -n "$STEP_ID" ] && [ -f "$RUNNER_TEMP/steplogs/$STEP_ID.log" ]; then
+            ERR=$(strip_ansi < "$RUNNER_TEMP/steplogs/$STEP_ID.log" | grep -aE "$ERR_RE" | head -1)
+            [ -n "$ERR" ] && echo "report-ci-error: error line anchored to steplogs/$STEP_ID.log"
+          fi
+          # 判定脚本的 PRE-FAIL 行只进 stdout（→ task-prompt.md），故对该文件单用窄正则。
+          if [ -z "$ERR" ] && [ -f "$GITHUB_WORKSPACE/task-prompt.md" ]; then
+            ERR=$(strip_ansi < "$GITHUB_WORKSPACE/task-prompt.md" \
+              | grep -aE '^[[:space:]]*PRE-FAIL[: ]' | head -1)
+            [ -n "$ERR" ] && echo "report-ci-error: error line anchored to task-prompt.md (PRE-FAIL)"
+          fi
+          if [ -z "$ERR" ]; then
+            for lf in "$RUNNER_TEMP"/steplogs/*.log; do
+              [ -f "$lf" ] || continue
+              cand=$(strip_ansi < "$lf" | grep -aE "$ERR_RE" | head -1)
+              [ -n "$cand" ] && { ERR="$cand"; echo "report-ci-error: error line from fallback glob $(basename "$lf")"; break; }
+            done
+          fi
           [ -n "$ERR" ] || ERR="(no matching error line captured in tee'd step logs; open the run for the raw tail)"
+          # 评论体是 markdown（不是日志），::name:: 在这里不会被解析成注解，故**不**改写错误行
+          # 内容——保持原样才利于归因；只截断超长行，避免评论爆炸（hosted report 作业同口径）。
+          ERR="${ERR:0:400}"
           # 4) 组装评论体到文件（首行必须正是 VERDICT: INFRA，独占结论通道）。逐行 printf
           #    而非多行字符串，避免 YAML block scalar 里出现 0 缩进行。
           MARKER="<!-- bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT -->"
@@ -563,8 +636,10 @@ jobs:
             | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT" \
             '[ .[][] | select(.body | contains($m)) | .id ] | (last // empty)')
           if [ -n "$EXIST_ID" ]; then
+            # body 必须走 --input + jq -Rs 的 JSON（gh api -f 是 raw string，**不**展开 @file，
+            # 会把 "@/tmp/.../infra-body.md" 这串字面量写进评论）。
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
-              -f "body=@$BODYF" >/dev/null \
+              --input <(jq -Rs '{body:.}' "$BODYF") >/dev/null \
               && echo "report-ci-error: PATCHed existing INFRA comment id=$EXIST_ID" \
               || echo "report-ci-error: PATCH failed (best-effort, ignored)"
           else
@@ -605,19 +680,32 @@ jobs:
             exit 0
           fi
           # 1) 时间窗内已有真结论 → 不抢通道，直接跳过（含成功路径）。
+          #    fail-closed（2026-09-07）：created_at 或探测本身取不到（API 抖动/限流）时站开
+          #    不贴——盲探拿到空串等价于「不知道」，此时贴 INFRA 有盖住真结论的风险。
           RUN_CREATED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .created_at)
+          if [ -z "$RUN_CREATED" ]; then
+            echo "report: cannot read this run's created_at (API failure) -- standing down (fail-closed)"
+            exit 0
+          fi
           HAS_VERDICT=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json comments,reviews \
             | jq --arg since "$RUN_CREATED" \
-            '[.comments[],.reviews[] | select(.createdAt >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | length')
-          if [ "${HAS_VERDICT:-0}" -gt 0 ]; then
+            '[.comments[],.reviews[] | select((.createdAt // .submittedAt) >= $since) | .body | split("\n")[0] | select(test("^VERDICT: *(PASS|FAIL)"))] | length')
+          case "$HAS_VERDICT" in
+            ''|*[!0-9]*)
+              echo "report: verdict probe failed (got '$HAS_VERDICT') -- standing down (fail-closed, no INFRA on an unknown)"
+              exit 0;;
+          esac
+          if [ "$HAS_VERDICT" -gt 0 ]; then
             echo "report: real PASS|FAIL verdict present in this run's window -- stands down (verify=$VERIFY_STATUS)"
             exit 0
           fi
           # 2) verify 若成功收尾（result=success）却查不到结论，属门禁/通道异常，仍按 INFRA 报；
           #    真正的正常绿一定有 PASS 评论，已在 ① 命中。这里只处理「无结论的终态」。
-          #    定位 verify job id 与失败步。
+          #    定位 verify job id 与失败步——必须限定 run_attempt：重跑（attempt+1）时 jobs 接口
+          #    会同时给出历次 attempt 的 job，不加限定会拿到上一 attempt 的旧 job/旧日志。
           mapfile -t VJ < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
-            --jq '.jobs[] | select(.name=="verify") | "\(.id) \(.conclusion)"')
+            | jq -r --arg att "$ATTEMPT" \
+              '.jobs[] | select(.name=="verify" and ((.run_attempt|tostring) == $att)) | "\(.id) \(.conclusion)"')
           VER_JOB_ID="${VJ[0]%% *}"; VER_CONC="${VJ[0]##* }"
           [ -z "$VER_CONC" ] && VER_CONC="$VERIFY_STATUS"
           STEPFAIL=""
@@ -627,16 +715,31 @@ jobs:
           fi
           STEPFAIL="${STEPFAIL:-the verify job (runner may have died; job conclusion=$VER_CONC)}"
           # 3) 从 verify 日志取首条真错误行（gh api 拉 job 日志；失败则留空，仍贴带链接的 INFRA）。
+          #    锚定失败步：job 日志里每步以 "##[group]Run <step name>" 开头，优先只看该步之后的
+          #    片段，取不到片段再退回全文扫描（与机内步「先 <id>.log 再 glob」同一口径）。
+          LOGF="$RUNNER_TEMP/verify-job.log"
           ERR=""
           if [ -n "$VER_JOB_ID" ]; then
-            ERR=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$VER_JOB_ID/logs" 2>/dev/null \
-              | sed -r 's/\x1b\[[0-9;]*[A-Za-z]//g' \
-              | grep -aE '(::error::|^.*\berror:|FAILED:|ninja: build stopped|CMake Error|Traceback|command not found|not on PATH)' \
+            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$VER_JOB_ID/logs" > "$LOGF" 2>/dev/null
+            strip_ansi() { sed -r 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
+            ERR_RE='(::error::|[Ee]rror:|FAILED:|ninja: build stopped|CMake Error|Traceback|command not found|not on PATH|PRE-FAIL)'
+            SLICE=""
+            if [ -n "$STEPFAIL" ] && [ -s "$LOGF" ]; then
+              SLICE="$RUNNER_TEMP/verify-step.log"
+              awk -v s="##[group]Run $STEPFAIL" 'index($0,s){f=1} f' "$LOGF" > "$SLICE"
+              [ -s "$SLICE" ] || SLICE=""
+            fi
+            SRC="$LOGF"; [ -n "$SLICE" ] && SRC="$SLICE"
+            [ -s "$SRC" ] && ERR=$(strip_ansi < "$SRC" \
+              | grep -aE "$ERR_RE" \
               | sed -E 's/^[0-9T:.-]+Z //; s/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
               | head -1)
+            rm -f "$LOGF" ${SLICE:-}
           fi
           [ -n "$ERR" ] || ERR="(no explicit error line retrieved from the hosted log fetch; see the job run)"
-          # 截断超长行，避免评论爆炸。
+          # 错误行里的 "::error::" 之类前缀先中和（日志里的这条前缀本身可能来自 PR 内容经会话
+          # 回显，不该被我们抄进评论再触发一次注解面），并截断超长行避免评论爆炸。
+          ERR=$(printf '%s' "$ERR" | sed -E 's/::([a-zA-Z][a-zA-Z0-9-]*)([[:space:]][^:]*)?::/[\1] /g')
           ERR="${ERR:0:400}"
           # 4) marker 与 3b 一致（run+attempt），命中则 PATCH，不重复贴。
           MARKER="<!-- bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT -->"
@@ -653,8 +756,10 @@ jobs:
             | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT" \
             '[ .[][] | select(.body | contains($m)) | .id ] | (last // empty)')
           if [ -n "$EXIST_ID" ]; then
+            # body 必须走 --input + jq -Rs 的 JSON（gh api -f 是 raw string，**不**展开 @file，
+            # 会把 "@/tmp/.../infra-body.md" 这串字面量写进评论）。
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
-              -f "body=@$BODYF" >/dev/null \
+              --input <(jq -Rs '{body:.}' "$BODYF") >/dev/null \
               && echo "report: PATCHed existing INFRA comment id=$EXIST_ID" \
               || echo "report: PATCH failed (best-effort)"
           else
