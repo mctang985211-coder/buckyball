@@ -58,6 +58,7 @@ function(buckyball_ctest_deps OUT_DEPS SOURCE_DIR SOURCE_FILE)
     ${WORKLOAD_LIB_DIR}/buckyball.c
     ${WORKLOAD_LIB_DIR}/buckyball.h
     ${BUCKYBALL_ISA_DIR}/${BUCKYBALL_CTEST_TARGET}/ballISA.h
+    ${BUCKYBALL_ISA_DIR}/${BUCKYBALL_CTEST_TARGET}/params.h
     ${BBHW_MEM_C}
     ${WORKLOAD_LIB_DIR}/bbhw/mem/mem.h
     ${BUCKYBALL_CHIP_COMMON_SOURCES}
@@ -152,8 +153,11 @@ function(add_buckyball_ctest SOURCE_FILE)
   if(_rushb_ok AND
      DEFINED BUCKYBALL_RUSHB_BEMU_MANIFEST AND
      DEFINED BUCKYBALL_RUSHB_VERILATOR_LIBRARY)
+    buckyball_rushb_default_core(
+      _rushb_core "${BUCKYBALL_CTEST_TARGET}")
     add_buckyball_rushb_native(${TEST_NAME}
       OUTPUT_SUBDIR src/CTest/rushB
+      CORE_ID ${_rushb_core}
       SOURCES
         ${SOURCE_DIR}/${SOURCE_FILE}
         ${WORKLOAD_LIB_DIR}/buckyball.c

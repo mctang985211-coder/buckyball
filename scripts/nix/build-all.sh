@@ -11,6 +11,7 @@ usage() {
   echo ""
   echo "Helper script to fully initialize repository that wraps other scripts."
   echo "By default it initializes/installs things in the following order:"
+  echo "   0. Nix environment (then git submodules, using nix git)"
   echo "   1. bbdev install"
   echo "   2. Compiler installation"
   echo "   3. RTL pre-compile sources"
@@ -19,6 +20,7 @@ usage() {
   echo "   6. bebop build"
   echo "   7. verify build"
   echo "   8. pre-commit hooks installation"
+  echo "   9. register project MCP"
   echo ""
   echo "**See below for options to skip parts of the setup. Skipping parts of the setup is not guaranteed to be tested/working.**"
   echo ""
@@ -75,9 +77,7 @@ function begin_step
   echo -e "${NC}"
 }
 
-${BBDIR}/scripts/nix/download.sh
-
-begin_step "0-2" "Nix environment setup"
+begin_step "0-1" "Nix environment setup"
 cd ${BBDIR}
 nix build
 if [ "${INSTALL_IN_NIX}" != "1" ]; then
@@ -87,6 +87,8 @@ if [ "${INSTALL_IN_NIX}" != "1" ]; then
   done
   exec nix develop --command bash ${BBDIR}/scripts/nix/build-all.sh --install-in-nix ${SKIP_ARGS} ${VERBOSE_FLAG}
 fi
+
+${BBDIR}/scripts/nix/download.sh
 
 if run_step "1"; then
   begin_step "1" "bbdev install"
@@ -146,6 +148,12 @@ if run_step "8"; then
   pre-commit install
   # Replace with wrapper so git commit gets nix env (result/bin in PATH)
   cp "${BBDIR}/scripts/pre-commit-hook.sh" "${BBDIR}/.git/hooks/pre-commit"
+fi
+
+if run_step "9"; then
+  begin_step "9" "register project MCP and Skills"
+  bash "${BBDIR}/.agents/mcps/scripts/install.sh"
+  bash "${BBDIR}/.agents/skills/scripts/install.sh"
 fi
 
 begin_step "END" "Setup completed successfully!"

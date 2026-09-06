@@ -53,20 +53,6 @@ int64_t addrBitsForDepth(int64_t bankDepth) {
   return bits;
 }
 
-uint64_t smatmulIterBits(int64_t op1Base, int64_t op2Base, int64_t wrBase,
-                         int64_t addrBits) {
-  if (addrBits < 1 || addrBits > 20)
-    llvm_unreachable("smatmul addrBits out of range");
-  if (3 * addrBits > 34)
-    llvm_unreachable("smatmul iter cannot hold three bases");
-  uint64_t mask = (1ULL << addrBits) - 1;
-  if ((uint64_t)op1Base > mask || (uint64_t)op2Base > mask ||
-      (uint64_t)wrBase > mask)
-    llvm_unreachable("smatmul base exceeds addrBits");
-  return (uint64_t)op1Base | ((uint64_t)op2Base << addrBits) |
-         ((uint64_t)wrBase << (2 * addrBits));
-}
-
 Value cstI64(OpBuilder &b, Location loc, uint64_t v) {
   return b.create<arith::ConstantOp>(loc, b.getI64Type(),
                                      b.getI64IntegerAttr(v));
@@ -240,17 +226,23 @@ class ForwardOperands : public OpConversionPattern<OpTy> {
 };
 
 struct BuckyballFenceLowering : public ConvertOpToLLVMPattern<FenceOp> {
-  using ConvertOpToLLVMPattern<FenceOp>::ConvertOpToLLVMPattern;
+  BuckyballFenceLowering(LLVMTypeConverter &converter, bool rushB)
+      : ConvertOpToLLVMPattern<FenceOp>(converter), rushB(rushB) {}
+
   LogicalResult
   matchAndRewrite(FenceOp op, OpAdaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value zero = cstI64(rewriter, loc, 0);
     rewriter.create<FenceIntrOp>(loc, zero, zero);
-    emitDmaCacheFence(rewriter, loc);
+    if (!rushB)
+      emitDmaCacheFence(rewriter, loc);
     rewriter.eraseOp(op);
     return success();
   }
+
+private:
+  bool rushB;
 };
 
 struct BuckyballMsetLowering : public ConvertOpToLLVMPattern<MsetOp> {
@@ -284,7 +276,8 @@ struct BuckyballMvinLowering : public ConvertOpToLLVMPattern<MvinOp> {
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     MemrefAddress memref = extractMemrefAddress(rewriter, loc, op.getInput());
-    emitDmaCacheFlush(rewriter, loc);
+    if (!rushB)
+      emitDmaCacheFlush(rewriter, loc);
     Value rs1 =
         packRs1BankIter(rewriter, loc, adaptor.getAddr(), adaptor.getDepth());
     Value rs2 =
@@ -312,7 +305,8 @@ struct BuckyballMvoutLowering : public ConvertOpToLLVMPattern<MvoutOp> {
     MemrefAddress memref = extractMemrefAddress(rewriter, loc, op.getOutput());
     emitBbDmaTouchMvout(rewriter, loc, memref.hostPtr, adaptor.getDepth(),
                         adaptor.getStride(), adaptor.getAddr());
-    emitDmaCacheFlush(rewriter, loc);
+    if (!rushB)
+      emitDmaCacheFlush(rewriter, loc);
     Value rs1 =
         packRs1BankIter(rewriter, loc, adaptor.getAddr(), adaptor.getDepth());
     Value rs2 =
@@ -352,7 +346,7 @@ void populateBaseLegalizeForLLVMExportPatterns(
                  ForwardOperands<func::ReturnOp>>(converter,
                                                   &converter.getContext());
   }
-  patterns.add<BuckyballFenceLowering>(converter);
+  patterns.add<BuckyballFenceLowering>(converter, rushB);
   patterns.add<BuckyballMsetLowering>(converter);
   patterns.add<BuckyballMvinLowering>(converter, rushB);
   patterns.add<BuckyballMvoutLowering>(converter, rushB);

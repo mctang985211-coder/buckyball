@@ -16,6 +16,7 @@
 #include "Buckyball/BuckyballDialect.h"
 #include "Buckyball/BuckyballOps.h"
 #include "Buckyball/Transform.h"
+#include "Target/BuckyballTargetRegistry.h"
 
 using namespace mlir;
 using namespace ::buddy::buckyball;
@@ -52,14 +53,6 @@ public:
     return "Lower Pebble Buckyball dialect ops.";
   }
 
-  Option<int64_t> bankWidthBytes{
-      *this, "bank_width", llvm::cl::desc("Physical bank width in bytes."),
-      llvm::cl::init(16)};
-  Option<int64_t> bankDepth{*this, "bank_depth",
-                            llvm::cl::desc("Depth of each bank."),
-                            llvm::cl::init(1024)};
-  Option<int64_t> bankNum{*this, "bank_num", llvm::cl::desc("Number of banks."),
-                          llvm::cl::init(8)};
   Option<bool> stable{*this, "stable",
                       llvm::cl::desc("Use stable LLVM Buckyball intrinsics."),
                       llvm::cl::init(false)};
@@ -73,6 +66,7 @@ public:
   }
 
   void runOnOperation() override {
+    const auto &targetConfig = buckyball_target::getBuckyballTarget();
     MLIRContext *context = &getContext();
     ModuleOp module = getOperation();
     LLVMTypeConverter converter(context);
@@ -83,7 +77,8 @@ public:
     target.addLegalDialect<cf::ControlFlowDialect, func::FuncDialect,
                            scf::SCFDialect>();
     populateBuckyballLegalizeForLLVMExportPatterns(
-        converter, patterns, bankWidthBytes, bankDepth, bankNum,
+        converter, patterns, targetConfig.bankWidthBits / 8,
+        targetConfig.bankDepth, targetConfig.bankNum,
         /*includeFuncOperandForwarding=*/false, stable, rushB);
 
     ConversionConfig config;
@@ -107,14 +102,6 @@ public:
     return "Lower Pebble bank-SSA and Buckyball ops to intrinsic ops.";
   }
 
-  Option<int64_t> bankWidthBytes{
-      *this, "bank_width", llvm::cl::desc("Physical bank width in bytes."),
-      llvm::cl::init(16)};
-  Option<int64_t> bankDepth{*this, "bank_depth",
-                            llvm::cl::desc("Depth of each bank."),
-                            llvm::cl::init(1024)};
-  Option<int64_t> bankNum{*this, "bank_num", llvm::cl::desc("Number of banks."),
-                          llvm::cl::init(8)};
   Option<bool> stable{*this, "stable",
                       llvm::cl::desc("Use stable LLVM Buckyball intrinsics."),
                       llvm::cl::init(false)};
@@ -129,6 +116,7 @@ public:
   }
 
   void runOnOperation() override {
+    const auto &targetConfig = buckyball_target::getBuckyballTarget();
     MLIRContext *context = &getContext();
     ModuleOp module = getOperation();
     LLVMTypeConverter converter(context);
@@ -138,7 +126,8 @@ public:
     configureBuckyballLegalizeForExportTarget(target, stable);
     target.addLegalDialect<func::FuncDialect, scf::SCFDialect>();
     populateBuckyballLegalizeForLLVMExportPatterns(
-        converter, patterns, bankWidthBytes, bankDepth, bankNum,
+        converter, patterns, targetConfig.bankWidthBits / 8,
+        targetConfig.bankDepth, targetConfig.bankNum,
         /*includeFuncOperandForwarding=*/false, stable, rushB);
 
     ConversionConfig config;
@@ -168,8 +157,8 @@ public:
 
   Option<int64_t> coreId{
       *this, "core_id",
-      llvm::cl::desc("Bind generated rushB calls to a tile Core."),
-      llvm::cl::init(-1)};
+      llvm::cl::desc("RushB Core ID passed to every host ABI call."),
+      llvm::cl::init(0)};
 
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<LLVM::LLVMDialect, ::buddy::buckyball::BuckyballDialect>();
@@ -187,32 +176,12 @@ public:
     OpBuilder builder(&getContext());
     Type i32Type = IntegerType::get(&getContext(), 32);
     Type voidType = LLVM::LLVMVoidType::get(&getContext());
-    FlatSymbolRefAttr selectCallee;
-    if (coreId >= 0) {
-      auto selectType =
-          LLVM::LLVMFunctionType::get(voidType, {i32Type, i32Type});
-      selectCallee = getOrInsertRushBFunction(
-          builder, module, "rushb_select_accelerator", selectType);
-    }
-    llvm::SmallPtrSet<func::FuncOp, 8> boundFunctions;
     for (Operation *op : intrinsicOps) {
-      if (coreId >= 0) {
-        if (auto function = op->getParentOfType<func::FuncOp>();
-            function && boundFunctions.insert(function).second) {
-          OpBuilder::InsertionGuard guard(builder);
-          builder.setInsertionPointToStart(&function.front());
-          auto selected = LLVM::ConstantOp::create(
-              builder, function.getLoc(), i32Type,
-              builder.getI32IntegerAttr(static_cast<int32_t>(coreId)));
-          auto chip =
-              LLVM::ConstantOp::create(builder, function.getLoc(), i32Type,
-                                       builder.getI32IntegerAttr(0));
-          LLVM::CallOp::create(builder, function.getLoc(), TypeRange{},
-                               selectCallee, ValueRange{selected, chip});
-        }
-      }
       builder.setInsertionPoint(op);
-      SmallVector<Value> operands;
+      Value core = LLVM::ConstantOp::create(
+          builder, op->getLoc(), i32Type,
+          builder.getI32IntegerAttr(static_cast<int32_t>(coreId)));
+      SmallVector<Value> operands{core};
       StringRef name;
       if (isa<MsetIntrOp>(op)) {
         name = "rushb_mset";

@@ -33,6 +33,29 @@ def _target_name(core) -> str:
     return core.role or core.pkg
 
 
+def _rushb_targets(chip) -> list[tuple[int, str]]:
+    result: list[tuple[int, str]] = []
+    for tile_id, tile in enumerate(chip.tiles):
+        if tile_id > 0xFFFF:
+            _die(f"tile index does not fit rushB ABI: {tile_id}")
+        for local_id, core_index in enumerate(tile.core_indices):
+            if local_id > 0xFFFF:
+                _die(
+                    f"tile {tile_id}: local Core index does not fit rushB ABI: {local_id}"
+                )
+            if core_index >= len(chip.cores):
+                _die(
+                    f"tile {tile_id}: Core index {core_index} out of range "
+                    f"(n={len(chip.cores)})"
+                )
+            core = chip.cores[core_index]
+            if not core.balldomain.mappings:
+                continue
+            core_id = (tile_id << 16) | local_id
+            result.append((core_id, _target_name(core)))
+    return result
+
+
 def _cxx_string(value: str) -> str:
     if not value:
         _die("empty string is not a valid compiler target field")
@@ -177,6 +200,54 @@ def _emit(chip, target: str | None = None) -> str:
     return "\n".join(chunks)
 
 
+def _isqrt(n: int) -> int:
+    if n <= 0:
+        _die(f"isqrt of non-positive {n}")
+    x = n
+    while True:
+        y = (x + n // x) // 2
+        if y >= x:
+            return x
+        x = y
+
+
+def _emit_params_header(profile, core, isa_dir: Path) -> None:
+    bank = core.mem.bank
+    mmio = core.mem.mmio
+    if bank.num == 0 or bank.width == 0 or bank.entries == 0:
+        _die(f"profile {profile.name}: bank geometry must be non-zero")
+    if bank.width % 8 != 0:
+        _die(f"profile {profile.name}: bank.width must be a multiple of 8")
+    if mmio.bank_num == 0 or mmio.bank_entries == 0 or mmio.bank_width == 0:
+        _die(f"profile {profile.name}: mmio geometry must be non-zero")
+    if mmio.bank_width % 8 != 0:
+        _die(f"profile {profile.name}: mmio.bank_width must be a multiple of 8")
+    row_bytes = bank.width // 8
+    mmio_bytes = mmio.bank_num * mmio.bank_entries * (mmio.bank_width // 8)
+    if mmio_bytes % row_bytes != 0:
+        _die(
+            f"profile {profile.name}: MMIO bytes {mmio_bytes} is not a multiple of "
+            f"SRAM row bytes {row_bytes}"
+        )
+    lines = [
+        "/* Generated from Chip.pb. Do not edit. */",
+        "#ifndef BBHW_PARAMS_H",
+        "#define BBHW_PARAMS_H",
+        "",
+        f"#define BANK_NUM {bank.num}",
+        f"#define BANK_WIDTH {bank.width}",
+        f"#define BANK_LINES {bank.entries}",
+        f"#define BANK_ISQRT {_isqrt(bank.entries)}",
+        f"#define MMIO_BANK_NUM {mmio.bank_num}",
+        f"#define MMIO_BANK_ENTRIES {mmio.bank_entries}",
+        f"#define MMIO_BANK_WIDTH_BITS {mmio.bank_width}",
+        "",
+        "#endif",
+        "",
+    ]
+    _write(isa_dir / profile.name / "params.h", "\n".join(lines))
+
+
 def _emit_isa_headers(chip, isa_dir: Path) -> None:
     """Emit one C ISA header per compiler target.
 
@@ -194,6 +265,7 @@ def _emit_isa_headers(chip, isa_dir: Path) -> None:
         lines.extend(["", "#endif", ""])
         header = isa_dir / profile.name / "ballISA.h"
         _write(header, "\n".join(lines))
+        _emit_params_header(profile, core, isa_dir)
 
 
 def _emit_dialect_td(chip, repo: Path) -> str:
@@ -350,6 +422,7 @@ def main() -> None:
     parser.add_argument("--print-bank-targets", action="store_true")
     parser.add_argument("--print-target-balls", action="store_true")
     parser.add_argument("--print-core-targets", action="store_true")
+    parser.add_argument("--print-rushb-targets", action="store_true")
     parser.add_argument("--print-ball-dialect-dirs", action="store_true")
     parser.add_argument(
         "--print-ball-compiler-paths",
@@ -367,6 +440,7 @@ def main() -> None:
         and not args.print_bank_targets
         and not args.print_target_balls
         and not args.print_core_targets
+        and not args.print_rushb_targets
         and not args.print_ball_dialect_dirs
         and args.print_ball_compiler_paths is None
     ):
@@ -418,6 +492,12 @@ def main() -> None:
             if target not in targets:
                 _die(f"CoreInstance {core.index}: no compiler profile {target}")
             print(f"{core.index}:{target}")
+    if args.print_rushb_targets:
+        targets = {profile.name for profile in chip.profiles}
+        for core_id, target in _rushb_targets(chip):
+            if target not in targets:
+                _die(f"rushB Core {core_id}: no compiler profile {target}")
+            print(f"{core_id}:{target}")
     if args.print_ball_dialect_dirs:
         for dialect_dir in _ball_dialect_dirs(chip, repo):
             print(dialect_dir)

@@ -2,10 +2,10 @@
 
 #include "Conversion/LowerBuckyball/LowerBuckyball.h"
 
+#include "Buckyball/BuckyballOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-
-#include "Buckyball/BuckyballOps.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
 using namespace mlir::buddy;
@@ -14,8 +14,12 @@ using namespace ::buddy::buckyball;
 PhysicalBankState::PhysicalBankState(int64_t bankNum)
     : bankNum(bankNum), used(bankNum, 0) {}
 
+int64_t PhysicalBankState::getUsedCount() const {
+  return llvm::count(used, static_cast<int8_t>(1));
+}
+
 std::optional<int64_t> PhysicalBankState::getConstI64(Value value) const {
-  for (unsigned depth = 0; depth != 16; ++depth) {
+  while (true) {
     if (auto cst = value.getDefiningOp<arith::ConstantOp>()) {
       auto attr = dyn_cast<IntegerAttr>(cst.getValue());
       if (!attr)
@@ -34,14 +38,40 @@ std::optional<int64_t> PhysicalBankState::getConstI64(Value value) const {
     if (Operation *op = value.getDefiningOp()) {
       StringRef name = op->getName().getStringRef();
       if (name == "buckyball.bank_transpose" ||
-          name == "buckyball.bank_fp2int" ||
-          name == "buckyball.bank_int2fp_tensor" ||
-          name == "buckyball.bank_int2fp_channel") {
+          name == "buckyball.bank_quant_f32_to_i8") {
         value = op->getOperand(1);
         continue;
       }
+      if (name == "buckyball.bank_quant_i32_to_i8") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_int32_to_fp32") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_smatmul_bias") {
+        value = op->getOperand(0);
+        continue;
+      }
       if (name == "buckyball.bank_im2col") {
-        value = op->getResult(0);
+        value = op->getOperand(1);
+        continue;
+      }
+      if (name == "buckyball.bank_lut") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_maxpool") {
+        value = op->getOperand(1);
+        continue;
+      }
+      if (name == "buckyball.bank_int8add") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_int8mul") {
+        value = op->getOperand(2);
         continue;
       }
       if (name == "buckyball.bank_smatmul" ||
@@ -65,7 +95,16 @@ std::optional<int64_t> PhysicalBankState::getConstI64(Value value) const {
     }
     return std::nullopt;
   }
-  return std::nullopt;
+}
+
+std::optional<BankSlot> PhysicalBankState::getSlot(Value value) const {
+  auto bank = getConstI64(value);
+  if (!bank)
+    return std::nullopt;
+  auto slot = vm.find(*bank);
+  if (slot == vm.end())
+    return std::nullopt;
+  return slot->second;
 }
 
 std::optional<int64_t> PhysicalBankState::tryAlloc(int64_t row, int64_t col) {
@@ -90,7 +129,10 @@ std::optional<int64_t> PhysicalBankState::tryAlloc(int64_t row, int64_t col) {
 LogicalResult PhysicalBankState::release(Operation *op, int64_t bank) {
   auto it = vm.find(bank);
   if (it == vm.end()) {
-    op->emitError("release of unknown virtual bank handle");
+    InFlightDiagnostic diagnostic =
+        op->emitError("release of unknown virtual bank handle");
+    diagnostic << " (bank=" << bank << ", live=" << vm.size()
+               << ", used=" << getUsedCount() << "/" << bankNum << ")";
     return failure();
   }
   freeAlloc(it->second);
