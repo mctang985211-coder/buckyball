@@ -1,10 +1,5 @@
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/IR/Matchers.h"
-#include "mlir/IR/PatternMatch.h"
-
-#include <type_traits>
 
 #include "Buckyball/BuckyballOps.h"
 #include "Dialect/Buckyball/Transforms/LegalizeForLLVMExportBase.h"
@@ -15,44 +10,24 @@ using namespace buddy::buckyball;
 using namespace buddy::buckyball::legalize;
 
 namespace {
-
-template <typename Op>
-struct Int2FpLowering : public ConvertOpToLLVMPattern<Op> {
-  using ConvertOpToLLVMPattern<Op>::ConvertOpToLLVMPattern;
+struct Int32ToFp32Lowering : public ConvertOpToLLVMPattern<Int32ToFp32Op> {
+  using ConvertOpToLLVMPattern<Int32ToFp32Op>::ConvertOpToLLVMPattern;
 
   LogicalResult
-  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
+  matchAndRewrite(Int32ToFp32Op op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     buckyball_target::requireBuckyballBall("Int2FpBall");
-    llvm::APInt daAddr(64, 0);
-    if (!matchPattern(op.getDaAddr(), m_ConstantInt(&daAddr)) ||
-        daAddr.getSExtValue() != 0)
-      return op.emitError("INT2FP Da address must be 0");
-    llvm::APInt dwConst(64, 0);
-    if (matchPattern(op.getDwAddr(), m_ConstantInt(&dwConst))) {
-      if (dwConst.getSExtValue() < 16 || dwConst.getSExtValue() % 4 != 0)
-        return op.emitError(
-            "INT2FP Dw address must be >= 16 and 4-byte aligned");
-    }
-    if (adaptor.getInputBankId() == adaptor.getOutputBankId())
-      return op.emitError("INT2FP forbids in-place dequantization");
     Location loc = op.getLoc();
     Value rs1 = packRs1BanksIter(rewriter, loc, adaptor.getInputBankId(),
-                                 cstI64(rewriter, loc, 0),
+                                 adaptor.getScaleBankId(),
                                  adaptor.getOutputBankId(), adaptor.getIter());
-    Value dw = rewriter.create<arith::ShLIOp>(loc, adaptor.getDwAddr(),
-                                              cstI64(rewriter, loc, 13));
-    Value rs2 = rewriter.create<arith::OrIOp>(loc, adaptor.getDaAddr(), dw);
-    llvm::StringRef mnemonic =
-        std::is_same_v<Op, Int2FpTensorOp> ? "INT2FP_TENSOR" : "INT2FP_CHANNEL";
     rewriter.replaceOpWithNewOp<CustomIntrOp>(
-        op, rs1, rs2,
+        op, rs1, cstI64(rewriter, loc, op.getRelu() ? 1 : 0),
         rewriter.getI32IntegerAttr(
-            buckyball_target::getBuckyballFunct7(mnemonic)));
+            buckyball_target::getBuckyballFunct7("INT32_TO_FP32")));
     return success();
   }
 };
-
 } // namespace
 
 namespace mlir::buddy::buckyball {
@@ -60,14 +35,12 @@ void populateInt2FpBallLegalizeForLLVMExportPatterns(
     LLVMTypeConverter &converter, RewritePatternSet &patterns, bool stable,
     int64_t, bool) {
   (void)stable;
-  patterns.add<Int2FpLowering<Int2FpTensorOp>, Int2FpLowering<Int2FpChannelOp>>(
-      converter);
+  patterns.add<Int32ToFp32Lowering>(converter);
 }
 
 void configureInt2FpBallLegalizeForExportTarget(LLVMConversionTarget &target,
                                                 bool stable) {
   (void)stable;
-  target.addIllegalOp<Int2FpTensorOp, Int2FpChannelOp, BankInt2FpTensorOp,
-                      BankInt2FpChannelOp>();
+  target.addIllegalOp<Int32ToFp32Op, BankInt32ToFp32Op>();
 }
 } // namespace mlir::buddy::buckyball
