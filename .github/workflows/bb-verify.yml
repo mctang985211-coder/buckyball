@@ -755,9 +755,8 @@ jobs:
             rm -f "$LOGF"
           fi
           [ -n "$ERR" ] || ERR="(no explicit error line retrieved from the hosted log fetch; see the job run)"
-          # 错误行里的 "::error::" 之类前缀先中和（日志里的这条前缀本身可能来自 PR 内容经会话
-          # 回显，不该被我们抄进评论再触发一次注解面），并截断超长行避免评论爆炸。
-          ERR=$(printf '%s' "$ERR" | sed -E 's/::([a-zA-Z][a-zA-Z0-9-]*)([[:space:]][^:]*)?::/[\1] /g')
+          # 评论体是 markdown（不是日志），行首 `::name::` 在这里不会被解析成 workflow 注解，
+          # 故**不**改写错误行内容——保持原样才利于归因（与机内回流步同一口径）；只截断超长行。
           ERR="${ERR:0:400}"
           # 4) marker 与 3b 一致（**只含 run=**，attempt 记在正文里做审计）→ 一条 run 全程
           #    最多一条 INFRA，重跑走 PATCH 更新同一条。
