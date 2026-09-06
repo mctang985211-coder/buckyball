@@ -53,10 +53,11 @@
 #     排它，消费方（人 / dsh / 路线图）见 INFRA 应**重发 dispatch** 而非读作验证结果。
 #   - report 伴生作业（hosted ubuntu-latest）：覆盖 runner 已死、verify 作业内的 3b 步根本
 #     跑不到的场景，见下。verify 与 report 复用同一 marker 幂等，至多一条 INFRA 评论。
-#   - **「至多一条」的限定（2026-09-07）**：唯一性范围 = 同一 (run_id, run_attempt)。marker
-#     里带 attempt 维度，所以重跑（attempt+1）**会**另起一条 INFRA——这是刻意的：新一轮的失败
-#     因与上一轮可能不同，覆盖旧条目反而丢信息。同 attempt 内的 verify 机内步与 hosted report
-#     作业才互相 PATCH。
+#   - **「至多一条」是无条件的，去重键 = run_id**（2026-09-07 受控红后定稿）：marker 只含
+#     `run=<id>`，attempt 记在评论正文里做审计。所以同一条 run 全程最多一条 INFRA，重跑
+#     （attempt+1）走 PATCH 更新同一条、正文更新而非再贴。写路径分工：机内回流步有
+#     per-step tee 日志 = 权威归因人；hosted report 只在「机内没贴上」时独立贴，且面对已有
+#     条目时**只升级占位错误行、绝不覆盖已锚定好的归因**（扁平 job 日志没有可靠的步边界）。
 #   - **消费方全景 5 处，第 5 处刻意不对称**：workflow 内 4 处（verdict-gate grep / stdout
 #     解析后的 PR 回退查询 / 评论在场门禁 / 两处站开探测都只认 PASS|FAIL），外加
 #     scripts/bb-verify-watchdog.sh 的「completed 无结论」判据认 PASS|FAIL|**INFRA**——因为
@@ -536,8 +537,9 @@ jobs:
       #     本步的「已有结论则不抢通道」检测当作结论——检测正则同样是 PASS|FAIL。
       #   - continue-on-error: true —— 回流本身是尽力而为，绝不再把已红的 job 改动或掩盖
       #     原始红因；它挂了无所谓（report 伴生作业会兜底）。
-      #   - 幂等：隐藏 marker `<!-- bb-verify:ci-error run=<id> attempt=<n> -->`；同 run
-      #     attempt 若已贴过（重入），走 PATCH 更新而非再贴一条。
+      #   - 幂等：隐藏 marker `<!-- bb-verify:ci-error run=<id> -->`——**去重键只有 run**，
+      #     attempt 只写进正文做审计。同一条 run 再贴（机内重入 / hosted 补报 / 重跑
+      #     attempt+1）一律走 PATCH 更新同一条，PR 上始终至多一条 INFRA。
       - name: Report failure to the PR
         if: failure()
         continue-on-error: true
@@ -620,7 +622,7 @@ jobs:
           ERR="${ERR:0:400}"
           # 4) 组装评论体到文件（首行必须正是 VERDICT: INFRA，独占结论通道）。逐行 printf
           #    而非多行字符串，避免 YAML block scalar 里出现 0 缩进行。
-          MARKER="<!-- bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT -->"
+          MARKER="<!-- bb-verify:ci-error run=$RUN_ID -->"
           BODYF="$RUNNER_TEMP/infra-body.md"
           printf 'VERDICT: INFRA\n' > "$BODYF"
           printf '\n' >> "$BODYF"
@@ -629,18 +631,21 @@ jobs:
           printf -- '- 失败步骤：%s\n' "$STEP" >> "$BODYF"
           printf -- '- 首条错误行：%s\n' "$ERR" >> "$BODYF"
           printf -- '- Run：%s (attempt %s)\n' "$JOB_URL" "$ATTEMPT" >> "$BODYF"
+          printf -- '- 来源：机内回流步（verify 作业内，有 per-step tee 日志，归因权威）\n' >> "$BODYF"
           printf -- '- 语义：VERDICT: INFRA 与 PASS/FAIL 三处门禁正则排它；此结论只表示 runner/CI 侧异常。\n' >> "$BODYF"
           printf '\n%s\n' "$MARKER" >> "$BODYF"
-          # 5) 幂等：同 run+attempt 若已贴过 INFRA（重入），PATCH 更新那一条；否则新建。
+          # 5) 幂等：**按 run 去重**（marker 只含 run=，attempt 写在正文里做审计）。已有同 run 的
+          #    INFRA 条目 → PATCH 同一条、正文更新而非再贴（重跑 attempt+1 走的就是这支）；本步
+          #    有机内 per-step 日志，归因一定不比 hosted 侧差，所以这里可以无条件 PATCH。
+          #    body 必须走 --input + jq -Rs 的 JSON（gh api -f 是 raw string，**不**展开 @file，
+          #    会把 "@/tmp/.../infra-body.md" 这串字面量写进评论）。
           EXIST_ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
-            | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT" \
+            | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID" \
             '[ .[][] | select(.body | contains($m)) | .id ] | (last // empty)')
           if [ -n "$EXIST_ID" ]; then
-            # body 必须走 --input + jq -Rs 的 JSON（gh api -f 是 raw string，**不**展开 @file，
-            # 会把 "@/tmp/.../infra-body.md" 这串字面量写进评论）。
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
               --input <(jq -Rs '{body:.}' "$BODYF") >/dev/null \
-              && echo "report-ci-error: PATCHed existing INFRA comment id=$EXIST_ID" \
+              && echo "report-ci-error: PATCHed existing INFRA comment id=$EXIST_ID (attempt $ATTEMPT)" \
               || echo "report-ci-error: PATCH failed (best-effort, ignored)"
           else
             gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$BODYF" \
@@ -654,8 +659,9 @@ jobs:
   #   needs: verify + if: always()，只用 API（gh）读 verify 的 job/steps 快照与日志，绝不碰
   #   持久根、不占本机 runner slot。判据：verify 终态但本轮时间窗内 PR 无任何 ^VERDICT:(PASS|FAIL)
   #   结论（既非绿也无 FAIL 评论）→ 贴 VERDICT: INFRA（首条 ::error::/error: 行 + job 链接）。
-  #   幂等：与 3b 复用同一 marker（run+attempt），verify 若在机内已贴过 INFRA，本作业走 PATCH
-  #   更新同一条、不重复贴；成功路径（有真 PASS）直接跳过。
+  #   幂等：与 3b 复用同一 marker（只含 run=）——机内已贴过就**不重复贴**，且只有「机内那条的
+  #   错误行是占位串、而本作业从日志里真拉到了错误行」时才 PATCH 升级；否则原样保留（绝不把
+  #   机内步锚定好的归因降级）。成功路径（有真 PASS）直接跳过。
   report:
     runs-on: ubuntu-latest
     needs: verify
@@ -715,53 +721,77 @@ jobs:
           fi
           STEPFAIL="${STEPFAIL:-the verify job (runner may have died; job conclusion=$VER_CONC)}"
           # 3) 从 verify 日志取首条真错误行（gh api 拉 job 日志；失败则留空，仍贴带链接的 INFRA）。
-          #    锚定失败步：job 日志里每步以 "##[group]Run <step name>" 开头，优先只看该步之后的
-          #    片段，取不到片段再退回全文扫描（与机内步「先 <id>.log 再 glob」同一口径）。
+          #    两条受控红实证过的口径（2026-09-07，run 34053805262）：
+          #    ① job 日志在 job 结束后**几秒内可能还没上传完**（本例 report 作业起在 verify
+          #      完成 4s 后，首拉为空 → 错误行退化成占位串），故带重试地拉；
+          #    ② 扁平 job 日志里**没有可靠的步边界**：`##[group]` 头是脚本的**第一行**而非步名
+          #      （本 workflow 四个步都以 `Run set -euo pipefail` 开头，切不出失败步片段）；
+          #      而全文扫描的**第一条** error 形行往往是 runner 回显的 workflow 自身源码
+          #      （`echo "::error::..."` 那些行），所以先剥掉回显前缀 `\x1b[36;1m` 的行。
+          #    归因精度靠机内步（有 per-step tee 日志）；hosted 侧只在机内步没贴上时才算独立
+          #    报告人，见第 5 步的站开/PATCH 分工。
           LOGF="$RUNNER_TEMP/verify-job.log"
           ERR=""
+          ERR_IS_REAL=0
+          strip_ansi() { sed -r 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
+          ERR_RE='(::error::|[Ee]rror:|FAILED:|ninja: build stopped|CMake Error|Traceback|command not found|not on PATH|PRE-FAIL)'
           if [ -n "$VER_JOB_ID" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$VER_JOB_ID/logs" > "$LOGF" 2>/dev/null
-            strip_ansi() { sed -r 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
-            ERR_RE='(::error::|[Ee]rror:|FAILED:|ninja: build stopped|CMake Error|Traceback|command not found|not on PATH|PRE-FAIL)'
-            SLICE=""
-            if [ -n "$STEPFAIL" ] && [ -s "$LOGF" ]; then
-              SLICE="$RUNNER_TEMP/verify-step.log"
-              awk -v s="##[group]Run $STEPFAIL" 'index($0,s){f=1} f' "$LOGF" > "$SLICE"
-              [ -s "$SLICE" ] || SLICE=""
-            fi
-            SRC="$LOGF"; [ -n "$SLICE" ] && SRC="$SLICE"
-            [ -s "$SRC" ] && ERR=$(strip_ansi < "$SRC" \
-              | grep -aE "$ERR_RE" \
+            for try in 1 2 3; do
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$VER_JOB_ID/logs" > "$LOGF" 2>/dev/null
+              [ -s "$LOGF" ] && break
+              echo "report: verify job log not ready yet (try $try) -- retrying in 15s"
+              sleep 15
+            done
+            [ -s "$LOGF" ] && ERR=$(sed -E '/\x1b\[36;1m/d' "$LOGF" \
+              | strip_ansi | grep -aE "$ERR_RE" \
               | sed -E 's/^[0-9T:.-]+Z //; s/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
               | head -1)
-            rm -f "$LOGF" ${SLICE:-}
+            [ -n "$ERR" ] && ERR_IS_REAL=1
+            rm -f "$LOGF"
           fi
           [ -n "$ERR" ] || ERR="(no explicit error line retrieved from the hosted log fetch; see the job run)"
           # 错误行里的 "::error::" 之类前缀先中和（日志里的这条前缀本身可能来自 PR 内容经会话
           # 回显，不该被我们抄进评论再触发一次注解面），并截断超长行避免评论爆炸。
           ERR=$(printf '%s' "$ERR" | sed -E 's/::([a-zA-Z][a-zA-Z0-9-]*)([[:space:]][^:]*)?::/[\1] /g')
           ERR="${ERR:0:400}"
-          # 4) marker 与 3b 一致（run+attempt），命中则 PATCH，不重复贴。
-          MARKER="<!-- bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT -->"
+          # 4) marker 与 3b 一致（**只含 run=**，attempt 记在正文里做审计）→ 一条 run 全程
+          #    最多一条 INFRA，重跑走 PATCH 更新同一条。
+          MARKER="<!-- bb-verify:ci-error run=$RUN_ID -->"
           BODYF="$RUNNER_TEMP/infra-body.md"
           printf 'VERDICT: INFRA\n\n' > "$BODYF"
           printf '基础设施失败（不是 PR 内容的验证结论），由 hosted report 作业补报。消费方应**重发 dispatch**。\n\n' >> "$BODYF"
           printf -- '- verify job：%s\n' "$STEPFAIL" >> "$BODYF"
           printf -- '- 首条错误行：%s\n' "$ERR" >> "$BODYF"
           printf -- '- Run：%s (attempt %s)\n' "$JOB_URL" "$ATTEMPT" >> "$BODYF"
+          printf -- '- 来源：hosted report 作业（兜底位；只有扁平 job 日志，无 per-step 边界）\n' >> "$BODYF"
           printf -- '- 语义：VERDICT: INFRA 与 PASS/FAIL 三处门禁正则排它；覆盖 runner 整机已死、机内回流步跑不到的场景。\n\n' >> "$BODYF"
           printf '%s\n' "$MARKER" >> "$BODYF"
-          # 5) 幂等：先找同 marker（可能 3b 已贴），有则 PATCH。
-          EXIST_ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
-            | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID attempt=$ATTEMPT" \
-            '[ .[][] | select(.body | contains($m)) | .id ] | (last // empty)')
+          # 5) 写路径（2026-09-07 受控红 run 34053805262 实证后定的分工）。规则一句话：
+          #    - 没有同 marker 的既有条目（机内步没跑到 / runner 整机已死）→ POST，本作业是唯一
+          #      报告人，哪怕错误行只是占位串也要贴（有链接的 INFRA 胜过硬空窗）。
+          #    - 已有条目：**只在「既有条目是占位错误行」且「本次拉到了真错误行」时 PATCH**（升级），
+          #      否则原样保留（站开）。踩过的坑：机内步用 per-step tee 日志锚出了正确的错误行，
+          #      而 hosted 侧面对的是**扁平 job 日志**（`##[group]` 头是脚本第一行而非步名，本
+          #      workflow 四个可失败步都以 `Run set -euo pipefail` 开头，切不出步片段；且第一条
+          #      error 形行往往是 runner 回显的 workflow 自身源码，已按 `\x1b[36;1m` 前缀剥掉），
+          #      无条件 PATCH 会把好的归因**降级**——受控红里真发生了（评论 created 19:06:19Z /
+          #      updated 19:06:35Z，最终正文成了 hosted 版）。
+          EXIST=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID" \
+              '[ .[][] | select(.body | contains($m)) ] | (last // empty)
+               | "\(.id // "")\t\((.body | test("no (matching|explicit) error line")) | tostring)"')
+          EXIST_ID="${EXIST%%$'\t'*}"; EXIST_PLACEHOLDER="${EXIST##*$'\t'}"
           if [ -n "$EXIST_ID" ]; then
-            # body 必须走 --input + jq -Rs 的 JSON（gh api -f 是 raw string，**不**展开 @file，
-            # 会把 "@/tmp/.../infra-body.md" 这串字面量写进评论）。
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
-              --input <(jq -Rs '{body:.}' "$BODYF") >/dev/null \
-              && echo "report: PATCHed existing INFRA comment id=$EXIST_ID" \
-              || echo "report: PATCH failed (best-effort)"
+            if [ "$EXIST_PLACEHOLDER" = "true" ] && [ "$ERR_IS_REAL" = "1" ]; then
+              # body 必须走 --input + jq -Rs 的 JSON（gh api -f 是 raw string，**不**展开 @file，
+              # 会把 "@/tmp/.../infra-body.md" 这串字面量写进评论）。
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
+                --input <(jq -Rs '{body:.}' "$BODYF") >/dev/null \
+                && echo "report: upgraded a placeholder INFRA comment id=$EXIST_ID (hosted log had a real error line)" \
+                || echo "report: PATCH failed (best-effort)"
+            else
+              echo "report: INFRA comment id=$EXIST_ID already filed (existing-is-placeholder=$EXIST_PLACEHOLDER, hosted-line-is-real=$ERR_IS_REAL) -- standing down, no downgrade"
+            fi
           else
             gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$BODYF" \
               && echo "report: posted new hosted-side INFRA comment" \
