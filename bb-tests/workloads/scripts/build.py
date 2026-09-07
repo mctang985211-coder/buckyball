@@ -23,6 +23,7 @@ _MODELS: dict[str, tuple[str, str]] = {
     "stable-diffusion": ("stablediffusion", "buddy-buckyball-stable-diffusion-run"),
     "whisper": ("whisper", "buddy-buckyball-whisper-run"),
     "buddynext": ("buddynext", "buddy-buckyball-buddynext-all-run"),
+    "pythia": ("pythia", "buddy-buckyball-pythia-run"),
 }
 
 _RUSHB: dict[str, dict[str, str]] = {
