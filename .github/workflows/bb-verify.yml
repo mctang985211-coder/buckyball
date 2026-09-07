@@ -1,65 +1,55 @@
-# bb-verify — verify-runner CI workflow（Phase 3：持久化 CI 工作区模式）
+# bb-verify — verify-runner CI workflow（持久化 CI 工作区模式）
 #
-# ⚠ 定位声明（合规审计 2026-09-06）：本文件与其同目录的 bootstrap-persistent-root.sh /
-#   runner-setup.md 是 **fork/本机部署物料，不是上游交付物**。上游 DangoSys/buckyball 里没有
+# ⚠ 定位声明：本文件与其同目录的 bootstrap-persistent-root.sh / runner-setup.md 是
+#   **fork/本机部署物料，不是上游交付物**。上游 DangoSys/buckyball 里没有
 #   bb-verify.yml；本 workflow 的上游对照物只有两份：.github/workflows/check.yaml 与
-#   .github/workflows/regression.yml（本次审计 pin = 9bb40565）。凡与本文件冲突的上游事实，
-#   以那两份为准；本文件出现的本机路径 / label / secret 名 / 持久化根都是这台机器的部署细节。
+#   .github/workflows/regression.yml（文件名是稳定锚点，具体行号/pin 一律现查）。
+#   凡与本文件冲突的上游事实，以那两份为准；本文件出现的本机路径 / label / secret 名 /
+#   持久化根都是这台机器的部署细节。
 #
-# Phase 3 变更（2026-08-30，对齐上游 .github/workflows/check.yaml 的持久化模式）：
-#   验证本体不再在 runner _work 的临时 checkout 里执行，而是固定使用本机持久化根
+# 持久化根模式：验证本体不在 runner _work 的临时 checkout 里执行，而是固定使用本机持久化根
 #   /home/ROXY/bb-verify/buckyball（由 ci/bootstrap-persistent-root.sh 一次性
 #   bootstrap：clone + 全量子模块 + nix build + bbdev api venv + bebop spike +
-#   compiler/workload 冷树首构）。理由：
-#   - 本机约束：执行依赖用户目录内已初始化的环境（热 nix store / 热构建树），
-#     runner _work 只做轻量编排（生成 task-prompt、staging 插件、跑 dsh）。
-#   - 上游先例：check.yaml 同样用持久化检出（~/Code/buckyball + ci_repo_lock.sh
-#     prepare）+ 每 run 增量跑 nix build / bbdev config --install / compiler
-#     --build / workload --build / bebop-bemu --batch。本 workflow 的 provision
-#     序列与上游一致，实测热树各步耗时见步骤注释（首次 bootstrap 见脚本头注）。
-#   - 此前 dispatch 的教训：_work 干净 checkout 缺子模块 → bbdev exec 命中空目录
-#     EISDIR/126（run 33263669829 的 FAIL 评论）；以及调试行 `ls result/bin |
-#     head -3` 在 set -euo pipefail 下因 Broken pipe 造成假失败（run
-#     33264657589）。持久化根 + 去掉该调试行后两类问题一并消除。
+#   compiler/workload 冷树首构）。理由：执行依赖用户目录内已初始化的环境（热 nix store /
+#   热构建树），runner _work 只做轻量编排（生成 task-prompt、staging 插件、跑 dsh）；
+#   check.yaml 同样用持久化检出 + 每 run 增量跑 nix build / bbdev config --install /
+#   compiler --build / workload --build / bebop-bemu --batch。本 workflow 的 provision
+#   序列与上游一致，实测热树各步耗时见步骤注释（首次 bootstrap 见脚本头注）。
 #
 # 机器相关（self-hosted runner 就是这台机器，详见 ci/runner-setup.md）：
-#   - /home/ROXY/code/deepseek-harness   — dsh harness 本机检出（pnpm dsh, v0.1.3-alpha.1）
+#   - /home/ROXY/code/deepseek-harness   — dsh harness 本机检出（pnpm dsh）
 #   - /home/ROXY/code/bb_work/dsh-plugin — dsh-plugin 本机检出；workflow 从该路径把
 #     verify-runner 复制进 runner.temp 再构建（本机分支领先 origin，git clone 远程
 #     拿不到当前工作区状态，故不用远程 clone）。
-#   - bbdev 不在宿主 PATH 上：verify-runner 按 §11 三级解析回退 `nix develop -c
+#   - bbdev 不在宿主 PATH 上：verify-runner 按三级解析回退 `nix develop -c
 #     bbdev`（cwd=repoPath=持久化根），只需 nix/gh/pnpm/node 可达 —— runner
 #     service 的 PATH 很小，由 Fix PATH 步骤补齐。
 #   - 安全纪律：全文件无任何明文 key。LLM key 只经 repo secret DEEPSEEK_API_KEY
 #     注入（Run verify-runner 步骤 env）；provider 配置用 apiKeyEnv 引用同名环境
 #     变量（见 ci/settings.ci.yaml）。
 #
-# 2026-09-06 确定性预判改造：stage 推断 / 证据清单 schema 校验 / 模型绑定三源检查 /
-# slices 证据查证 / perf 轮上轮 probe 取证由 verify-runner/scripts/ 下五个纯 node 脚本在「Deterministic
+# 确定性预判：stage 推断 / 证据清单 schema 校验 / 模型绑定三源检查 / slices 证据查证 /
+# perf 轮上轮 probe 取证由 verify-runner/scripts/ 下五个纯 node 脚本在「Deterministic
 # verdict inputs」步骤产出并注入 task-prompt.md（prompt.ts 只消费不重新判定）；
-# Run verify-runner 之后新增双门禁：评论在场门禁（comments∪reviews 缺 VERDICT 首行
-# 即红，r4 假绿事故双保险）与只读门禁（会话前后 tracked diff 逐字节比对）。
+# Run verify-runner 之后有双门禁：评论在场门禁（comments∪reviews 缺 VERDICT 首行
+# 即红）与只读门禁（会话前后 tracked diff 逐字节比对）。
 #
-# 2026-09-06 CI 基建加固轮（见 DELIVERY.md §14）：
-#   - 失败回流（VERDICT: INFRA）：Prepare / Deterministic verdict inputs / Provision /
-#     Stage dsh-plugin 四步带 id 且把输出 tee 进 $RUNNER_TEMP/steplogs/<id>.log；末尾新增
-#     「Report failure to the PR」步（if: failure()，continue-on-error），当本轮时间窗内
-#     PR comments∪reviews **没有** 真实结论（^VERDICT: (PASS|FAIL)）时，剥 ANSI 取首条真错误
-#     行 + 失败步骤名，贴一条首行 `VERDICT: INFRA` 的评论（带隐藏 marker，同 run 重入走 PATCH
-#     幂等）。
+# 失败回流（VERDICT: INFRA）：Prepare / Deterministic verdict inputs / Provision /
+#   Stage dsh-plugin 四步带 id 且把输出 tee 进 $RUNNER_TEMP/steplogs/<id>.log；末尾的
+#   「Report failure to the PR」步（if: failure()，continue-on-error）在**没有**真实
+#   结论（^VERDICT: (PASS|FAIL)）时，剥 ANSI 取首条真错误行 + 失败步骤名，贴一条首行
+#   `VERDICT: INFRA` 的评论（带隐藏 marker，同 run 重入走 PATCH 幂等）。
 #   - **契约（排它性）**：INFRA 只在「基础设施失败」时贴，不判 PR 内容。verdict-gate
 #     (grep PASS|FAIL)、回退查询 (test PASS|FAIL)、评论在场门禁 (test PASS|FAIL) 三处正则
 #     都只认 PASS|FAIL，故 `VERDICT: INFRA` 首行不被任何门禁当作结论——INFRA 与 PASS|FAIL 三处
 #     排它，消费方（人 / dsh / 路线图）见 INFRA 应**重发 dispatch** 而非读作验证结果。
-#   - report 伴生作业（hosted ubuntu-latest）：覆盖 runner 已死、verify 作业内的 3b 步根本
-#     跑不到的场景，见下。verify 与 report 复用同一 marker 幂等，至多一条 INFRA 评论。
-#   - **「至多一条」是无条件的，去重键 = run_id**：marker 只含 `run=<id>`，attempt 记在评论正文
-#     里做审计。所以同一条 run 全程最多一条 INFRA，重跑（attempt+1）走 PATCH 更新同一条、正文更新
-#     而非再贴。写路径分工：机内回流步有 per-step tee 日志 = 权威归因人（它拿到真错误行时一定
-#     覆盖既有条目）；hosted report 只在「机内没贴上」时独立贴。**「绝不把已锚定的真错误行降级成
-#     占位串」两条写路径共用**——各自的 PATCH 前都查既有条目带不带占位 marker，自己这轮只是占位串
-#     而既有那条已锚定真错误行时一律站开（hosted 侧的成因是扁平 job 日志切不出步边界；机内侧的
-#     成因是重跑那一轮可能换失败步、steplogs 是全新空目录。受控红事故实录见 DELIVERY.md §15）。
+#   - report 伴生作业（hosted ubuntu-latest）：覆盖 runner 已死、verify 作业内的回流步根本
+#     跑不到的场景。verify 与 report 复用同一 marker 幂等，至多一条 INFRA 评论。
+#   - **「至多一条」是无条件的，去重键 = run_id**：marker 只含 `run=<id>`，attempt 记在评论
+#     正文里做审计。同一条 run 全程最多一条 INFRA，重跑（attempt+1）走 PATCH 更新同一条而非
+#     再贴。写路径分工：机内回流步有 per-step tee 日志 = 权威归因人（它拿到真错误行时一定
+#     覆盖既有条目）；hosted report 只在「机内没贴上」时独立贴。**「绝不把已锚定的真错误行
+#     降级成占位串」两条写路径共用**——各自的 PATCH 前都查既有条目带不带占位 marker。
 #   - **消费方全景 5 处，第 5 处刻意不对称**：workflow 内 4 处（verdict-gate grep / stdout
 #     解析后的 PR 回退查询 / 评论在场门禁 / 两处站开探测都只认 PASS|FAIL），外加
 #     scripts/bb-verify-watchdog.sh 的「completed 无结论」判据认 PASS|FAIL|**INFRA**——因为
@@ -280,13 +270,15 @@ jobs:
           # —— 第二个 output：provision 豁免位（provision_exempt）——
           # compilerTouched=true 只说明「本 PR 的编译器写集要有人裁决」，豁免（Provision 的
           # compiler --build 失败不判红）成立的条件是**门禁轮的 plan 自己会重跑 compiler build**。
-          # 事实源 = verify-runner/src/tools/bbdev-plan.ts 的 compilerPrerequisite() 调用点：
+          # ← 此处组合表是 src/tools/bbdev-plan.ts 的 compilerPrerequisite() 调用点的**镜像**：
+          #   唯一事实源是 plan 侧（CI 运行时读不了插件代码，故这里保留一份，plan 增删前置组合
+          #   必须同步本表；核对方式 = 看 bbdev-plan.ts 里 compilerPrerequisite() 的每个调用点）。
           #   前置 config install → compiler build 的组合 = 无 phase 基线（workload/ / ball/ /
           #   chip/ 三种 stage 都算，chip 基线与 skeleton 是恒定前置，另两者由 compilerTouched
           #   决定）+ ball/c-bemu + ball/rtl + chip/skeleton + chip/slices + chip/integrate；
           #   **唯一不前置的合法组合是 chip/bind**（该分支只走 modelCoverage(true)），而 bind 的
           #   `workload --build --model` 实物上仍消费编译器产物
-          #   （$BB/bb-tests/workloads/CMakeLists.txt:14-17 把 BUDDY_BINARY_DIR 定为
+          #   （$BB/bb-tests/workloads/CMakeLists.txt 把 BUDDY_BINARY_DIR 定为
           #   $ENV{BUDDY_MLIR_BUILD_DIR}/bin 并从中取 buddy-opt / buddy-translate / buddy-llc）
           #   ⇒ 若照旧豁免，那一轮就是拿热树里残留的旧编译器跑绿，PR 弄坏的编译器无人裁决。
           #   bind 因此不豁免：编译器构建失败在 Provision 真红（INFRA 评论带着错误行，可归因），
@@ -321,14 +313,13 @@ jobs:
             node "$SCRIPTS/probe-loop-check.mjs" --context pr-context.json
           } > task-prompt.md
 
-      # 每 run 的 provision 序列（= 上游 check.yaml:123-126 的 chip-check 顺序，全部在持久
-      # 化根内增量执行；2026-08-30 持久化根实测：nix build 4.5s、config --install
-      # 15s；compiler/workload 冷树首构耗时见 bootstrap 脚本头注，热树增量远快）。
-      # chip 不再写死 toy：本步骤只是**热树预热**（真正的验证序列由会话侧 bbdev_plan 按
-      # 判定块注入的 chip 生成），但按清单 chip 预热才对那棵 chip 的构建树有用；清单缺失或
-      # 非法（validate-manifest 已 PRE-FAIL）时退回 toy，并在日志里注明这是预热而非判定。
+      # 每 run 的 provision 序列（与上游 .github/workflows/check.yaml 的 chip-check 顺序一致，
+      # 全部在持久化根内增量执行；nix build / config --install 热树耗时见 bootstrap 脚本头注）。
+      # 本步骤只是**热树预热**（真正的验证序列由会话侧 bbdev_plan 按判定块注入的 chip 生成），
+      # 但按清单 chip 预热才对那棵 chip 的构建树有用；清单没带 chip，或持久化根没有该 chip 的
+      # 实物目录，都**直接红**——退回 toy 只会把「清单与持久化根不一致」盖住，不兜底。
       # 注意不放 `ls result/bin | head -3` 之类调试行 —— pipefail 下 head 提前关闭
-      # 管道会让 `ls` 以 EPIPE 退出造成假失败（run 33264657589 教训）。
+      # 管道会让 `ls` 以 EPIPE 退出造成假失败。
       - name: Provision persistent root (nix build + bbdev config/compiler/workload)
         id: provision
         env:
@@ -352,9 +343,14 @@ jobs:
             const { parseManifest } = await import(`file://${process.env.SCRIPTS}/manifest.mjs`)
             const body = JSON.parse(readFileSync(`${process.env.GITHUB_WORKSPACE}/pr-context.json`, "utf8")).body
             const chip = parseManifest(body).chip
-            // 只做预热用 chip 选择：清单没写或该 chip 在树上无实物时退回 toy 并注明，
-            // 判定侧的 chip 缺失由 validate-manifest.mjs 的 PRE-FAIL 负责，不归本步骤。
-            process.stdout.write(chip !== undefined && existsSync(`${process.env.BB_VERIFY_ROOT}/examples/chips/${chip}`) ? chip : "toy")
+            // 预热只对清单声明的 chip 有意义：清单没带 chip（validate-manifest 会判 PRE-FAIL，
+            // 但那发生在判定块里，预热侧仍无 chip 可暖）或持久化根无该 chip 目录 → 直接红，
+            // 不退回 toy——用另一个 chip 暖树对门禁轮毫无用处，只会掩盖清单/持久化根不一致。
+            if (chip === undefined || !existsSync(`${process.env.BB_VERIFY_ROOT}/examples/chips/${chip}`)) {
+              console.error(`provision: 清单 chip 缺失或持久化根无该 chip（"${chip ?? "<无>"}"）—— 无法预热，宁红不假绿`)
+              process.exit(1)
+            }
+            process.stdout.write(chip)
           ')
           echo "provision chip=${PROVISION_CHIP}（仅热树预热；验证序列的 chip 以判定块注入值为准）"
           echo "compilerTouched=${COMPILER_TOUCHED:-<unset>} provisionExempt=${PROVISION_EXEMPT:-<unset>}" \
@@ -790,7 +786,7 @@ jobs:
   #   结论（既非绿也无 FAIL 评论）→ 贴 VERDICT: INFRA（首条 ::error::/error: 行 + job 链接）。
   #   幂等：与 3b 复用同一 marker（只含 run=）——机内已贴过就**不重复贴**，且只有「机内那条带占位
   #   marker、而本作业从日志里真拉到了错误行」时才 PATCH 升级；否则原样保留（绝不把机内步锚定好的
-  #   归因降级——扁平 job 日志切不出步边界，受控红事故实录见 DELIVERY.md §15）。成功路径（有真 PASS）
+  #   归因降级——扁平 job 日志切不出步边界；受控红事故实录在 git 历史里）。成功路径（有真 PASS）
   #   直接跳过。
   report:
     runs-on: ubuntu-latest
@@ -851,7 +847,7 @@ jobs:
           fi
           STEPFAIL="${STEPFAIL:-the verify job (runner may have died; job conclusion=$VER_CONC)}"
           # 3) 从 verify 日志取首条真错误行（gh api 拉 job 日志；失败则留空，仍贴带链接的 INFRA）。
-          #    两条口径（事故实录见 DELIVERY.md §15）：
+          #    两条口径（受控红事故实录在 git 历史里）：
           #    ① job 日志在 job 结束后几秒内可能还没上传完，故带重试地拉（见第 4 段 for 循环）；
           #    ② 扁平 job 日志切不出步边界——`##[group]` 头是脚本第一行而非步名，切不出失败步片段；
           #      而全文扫描的第一条 error 形行往往是 runner 回显的 workflow 自身源码
@@ -905,7 +901,7 @@ jobs:
           #      报告人，哪怕错误行只是占位串也要贴（有链接的 INFRA 胜过硬空窗）。
           #    - 已有条目：**只在「既有条目带占位 marker」且「本次拉到了真错误行」时 PATCH**（升级），
           #      否则原样保留（站开）——扁平 job 日志切不出步边界，hosted 侧看不到机内步的 per-step
-          #      tee 锚定，无条件 PATCH 只会把好归因降级。事故实录见 DELIVERY.md §15。
+          #      tee 锚定，无条件 PATCH 只会把好归因降级。
           EXIST=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
             | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID" \
               --arg ph "<!-- bb-verify:err-line placeholder -->" \
