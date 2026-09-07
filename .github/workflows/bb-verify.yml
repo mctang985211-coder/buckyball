@@ -23,7 +23,7 @@
 #     33264657589）。持久化根 + 去掉该调试行后两类问题一并消除。
 #
 # 机器相关（self-hosted runner 就是这台机器，详见 ci/runner-setup.md）：
-#   - /home/ROXY/code/deepseek-harness   — dsh harness 本机检出（pnpm dsh, v0.1.1-rc.2）
+#   - /home/ROXY/code/deepseek-harness   — dsh harness 本机检出（pnpm dsh, v0.1.3-alpha.1）
 #   - /home/ROXY/code/bb_work/dsh-plugin — dsh-plugin 本机检出；workflow 从该路径把
 #     verify-runner 复制进 runner.temp 再构建（本机分支领先 origin，git clone 远程
 #     拿不到当前工作区状态，故不用远程 clone）。
@@ -55,9 +55,11 @@
 #     跑不到的场景，见下。verify 与 report 复用同一 marker 幂等，至多一条 INFRA 评论。
 #   - **「至多一条」是无条件的，去重键 = run_id**：marker 只含 `run=<id>`，attempt 记在评论正文
 #     里做审计。所以同一条 run 全程最多一条 INFRA，重跑（attempt+1）走 PATCH 更新同一条、正文更新
-#     而非再贴。写路径分工：机内回流步有 per-step tee 日志 = 权威归因人；hosted report 只在「机内
-#     没贴上」时独立贴，且面对已有条目时**只升级占位错误行、绝不覆盖已锚定好的归因**——扁平 job
-#     日志切不出步边界（该分工的受控红事故实录见 DELIVERY.md §15）。
+#     而非再贴。写路径分工：机内回流步有 per-step tee 日志 = 权威归因人（它拿到真错误行时一定
+#     覆盖既有条目）；hosted report 只在「机内没贴上」时独立贴。**「绝不把已锚定的真错误行降级成
+#     占位串」两条写路径共用**——各自的 PATCH 前都查既有条目带不带占位 marker，自己这轮只是占位串
+#     而既有那条已锚定真错误行时一律站开（hosted 侧的成因是扁平 job 日志切不出步边界；机内侧的
+#     成因是重跑那一轮可能换失败步、steplogs 是全新空目录。受控红事故实录见 DELIVERY.md §15）。
 #   - **消费方全景 5 处，第 5 处刻意不对称**：workflow 内 4 处（verdict-gate grep / stdout
 #     解析后的 PR 回退查询 / 评论在场门禁 / 两处站开探测都只认 PASS|FAIL），外加
 #     scripts/bb-verify-watchdog.sh 的「completed 无结论」判据认 PASS|FAIL|**INFRA**——因为
@@ -251,10 +253,10 @@ jobs:
           # 错误正则会误抓 PR 散文里的 "error:"）。
           mkdir -p "$RUNNER_TEMP/steplogs"
           exec 2> >(tee "$RUNNER_TEMP/steplogs/verdict_inputs.log" >&2)
-          SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
+          export SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
           # infer-stage 先单独落盘：它的输出既进 task-prompt.md 判定块（[stage] 段），又被下面
-          # 抽 compilerTouched 写进 $GITHUB_OUTPUT——这是 Provision 编译器构建处置（continue-on-error
-          # + workload same-flag-skip）的打通点，见下方 provision_compiler 步骤的推演注记。
+          # 抽 compilerTouched 写进 $GITHUB_OUTPUT——这是 Provision 编译器构建处置（set +e 捕获
+          # rc + workload same-flag-skip）的打通点，见本步豁免位注记与下方 provision 步的推演注记。
           STAGE_BLOCK="$RUNNER_TEMP/infer-stage.out"
           node "$SCRIPTS/infer-stage.mjs" --context pr-context.json > "$STAGE_BLOCK"
           # 从 [stage] 段的 compilerTouched 行抽布尔；infer-stage.main() 无条件打这一行
@@ -265,10 +267,48 @@ jobs:
           # Provision 先红 → INFRA → 重发复现的死循环，正是本打通要消除的对象）。
           case "$COMPILER_TOUCHED" in
             true|false) : ;;
-            *) echo "::error::无法从 infer-stage 输出抽出 compilerTouched（got '${COMPILER_TOUCHED:-<empty>}'）—— 判定管线故障，宁红不假绿"; exit 1 ;;
+            *)
+              # 这一行必须走 **stderr**：本步的 tee 只接 stderr（`exec 2> >(... tee
+              # steplogs/verdict_inputs.log)`），而 exit 1 又早于 task-prompt.md 生成 ⇒ 写在
+              # stdout 上时回流步两头都捞不到错误行，只能贴不可归因的占位串。stderr 一支不丢
+              # 注解（runner 的 ScriptHandler 给 stdout/stderr 各挂一个 OutputManager，两条流
+              # 都过同一个 ActionCommandManager），且日志面由 tee 独占写入、无第二写者竞态。
+              echo "::error::无法从 infer-stage 输出抽出 compilerTouched（got '${COMPILER_TOUCHED:-<empty>}'）—— 判定管线故障，宁红不假绿" >&2
+              exit 1 ;;
           esac
           echo "compiler_touched=$COMPILER_TOUCHED" >> "$GITHUB_OUTPUT"
-          echo "verdict_inputs: compilerTouched=$COMPILER_TOUCHED → \$GITHUB_OUTPUT（provision_compiler 处置依据）"
+          # —— 第二个 output：provision 豁免位（provision_exempt）——
+          # compilerTouched=true 只说明「本 PR 的编译器写集要有人裁决」，豁免（Provision 的
+          # compiler --build 失败不判红）成立的条件是**门禁轮的 plan 自己会重跑 compiler build**。
+          # 事实源 = verify-runner/src/tools/bbdev-plan.ts 的 compilerPrerequisite() 调用点：
+          #   前置 config install → compiler build 的组合 = 无 phase 基线（workload/ / ball/ /
+          #   chip/ 三种 stage 都算，chip 基线与 skeleton 是恒定前置，另两者由 compilerTouched
+          #   决定）+ ball/c-bemu + ball/rtl + chip/skeleton + chip/slices + chip/integrate；
+          #   **唯一不前置的合法组合是 chip/bind**（bind 只走 modelCoverage(true)，
+          #   bbdev-plan.ts:336-341），而 bind 的 `workload --build --model` 实物上仍消费编译器
+          #   产物（bb-tests/workloads/CMakeLists.txt:14-17 从 $ENV{BUDDY_MLIR_BUILD_DIR}/bin 取
+          #   buddy-opt/buddy-translate/buddy-llc）⇒ 若照旧豁免，那一轮就是拿热树里残留的旧
+          #   编译器跑绿，PR 弄坏的编译器无人裁决。bind 因此不豁免：编译器构建失败在 Provision
+          #   真红（INFRA 评论带着错误行，可归因），宁红不假绿。
+          # stage 取 [stage] 的 effective（prompt.ts 消费条 3），phase 取清单声明值
+          # （validate-manifest 同款 parseManifest）；任一取不到（清单非法、effective 无法判定）
+          # 都**不算**豁免——豁免需要「本轮会重跑 compiler build」的正面证据。
+          EFFECTIVE=$(sed -n -E 's/^[[:space:]]*effective:[[:space:]]*(workload|ball|chip)[[:space:]]*$/\1/p' "$STAGE_BLOCK")
+          MANIFEST_PHASE=$(node --input-type=module -e '
+            import { readFileSync } from "node:fs"
+            const { parseManifest } = await import(`file://${process.env.SCRIPTS}/manifest.mjs`)
+            const body = JSON.parse(readFileSync(`${process.env.GITHUB_WORKSPACE}/pr-context.json`, "utf8")).body
+            process.stdout.write(parseManifest(body).phase ?? "")
+          ')
+          PROVISION_EXEMPT=false
+          if [ "$COMPILER_TOUCHED" = "true" ]; then
+            case "${EFFECTIVE:-none}/${MANIFEST_PHASE:-none}" in
+              workload/none|ball/none|chip/none|ball/c-bemu|ball/rtl|chip/skeleton|chip/slices|chip/integrate)
+                PROVISION_EXEMPT=true ;;
+            esac
+          fi
+          echo "provision_exempt=$PROVISION_EXEMPT" >> "$GITHUB_OUTPUT"
+          echo "verdict_inputs: compilerTouched=$COMPILER_TOUCHED effective=${EFFECTIVE:-<无法判定>} phase=${MANIFEST_PHASE:-<无>} → provision_exempt=$PROVISION_EXEMPT（\$GITHUB_OUTPUT；provision 步的编译器构建处置依据）"
           { echo "验证 PR #$PR。验证层级：$LAYER（merge=门禁层；complete=重验证）。PR 上下文（含描述中的证据清单）如下："
             cat pr-context.json
             echo
@@ -294,7 +334,11 @@ jobs:
           # P0 打通：compilerTouched 由前置的 Deterministic verdict inputs 步从 infer-stage 输出
           # 抽出并写进 $GITHUB_OUTPUT（compiler_touched）。true = 本 PR 累计写集触及 ball/core 的
           # compiler/**，编译器构建本身是门禁轮要裁决的内容，不是 CI 基建。
+          # 本步的豁免判定读 provision_exempt（同一层的第二个 output），不直接读 compiler_touched：
+          # 只有「本轮门禁 plan 自己会重跑 compiler build」时把编译器失败降级才有承载者，
+          # compilerTouched=true 而 plan 不含 compiler build 的那一支（chip/bind）不豁免。
           COMPILER_TOUCHED: ${{ steps.verdict_inputs.outputs.compiler_touched }}
+          PROVISION_EXEMPT: ${{ steps.verdict_inputs.outputs.provision_exempt }}
         run: |
           set -euo pipefail
           # tee 到 per-step 日志供失败回流；exec 重定向不参与判定（内层 set -euo pipefail 保持）。
@@ -312,7 +356,9 @@ jobs:
             process.stdout.write(chip !== undefined && existsSync(`${process.env.BB_VERIFY_ROOT}/examples/chips/${chip}`) ? chip : "toy")
           ')
           echo "provision chip=${PROVISION_CHIP}（仅热树预热；验证序列的 chip 以判定块注入值为准）"
-          echo "compilerTouched=${COMPILER_TOUCHED:-<unset>}（verdict_inputs 步 compiler_touched 输出；决定编译器构建失败是否降级为门禁轮裁决）"
+          echo "compilerTouched=${COMPILER_TOUCHED:-<unset>} provisionExempt=${PROVISION_EXEMPT:-<unset>}" \
+               "（verdict_inputs 步的两个输出；决定编译器构建失败是否降级为门禁轮裁决的是 provision_exempt，" \
+               "它比 compilerTouched 多一个条件：本轮门禁 plan 自己会重跑 compiler build）"
           echo "::group::nix build"; time nix build; echo "::endgroup::"
           echo "::group::bbdev config --install"
           time nix develop -c bbdev config --install
@@ -321,37 +367,40 @@ jobs:
           # 推演：编译器写集被本 PR 弄炸时，若照旧让 compiler --build 的非零退出直接判红整步，
           #   就变成「Provision 先红 → 回流 VERDICT: INFRA → 消费方重发 dispatch → 门禁轮又撞到
           #   同一个编译器错」的死循环——可编译器构建本就是门禁轮要裁决的**验证内容**，不是基建。
-          # 因此只在 compilerTouched=true 时把编译器构建失败降级：用 set +e 捕获 rc、本步保持绿、
+          # 因此只在 provision_exempt=true 时把编译器构建失败降级：用 set +e 捕获 rc、本步保持绿、
           #   末尾 echo 明确注记交门禁轮裁决（注记进 provision.log 与 Actions 日志，可见）。
+          #   豁免位的构成（compilerTouched ∧ 本轮 plan 含 compiler build）与 bind 空洞的推演
+          #   写在 verdict_inputs 步的注记里，那里是唯一判定处；本步只消费，不再自己判 phase。
           # 为什么不用步级 continue-on-error: true：continue-on-error 是整步属性，若在
-          #   compilerTouched=true 时置真，会连 nix build / config --install 的真基建失败一起吞掉
+          #   豁免时置真，会连 nix build / config --install 的真基建失败一起吞掉
           #   （它们与编译器写集无关，必须真红）；且 run 块首行 set -euo pipefail，构建一 non-zero
           #   就中断，continue-on-error 只会让「已中断的步」显示为忽略错，末尾注记根本跑不到。
           #   故沿用 Run verify-runner 步骤的 set +e / rc=$? / set -e 捕获范式，做到「本步仍绿、
           #   注记必达、且只豁免编译器这一条命令」。
           COMPILER_RC=0
-          if [ "${COMPILER_TOUCHED:-false}" = "true" ]; then
-            echo "::group::bbdev compiler --build (incremental；compilerTouched=true → 失败交门禁轮裁决)"
+          if [ "${PROVISION_EXEMPT:-false}" = "true" ]; then
+            echo "::group::bbdev compiler --build (incremental；provision_exempt=true → 失败交门禁轮裁决)"
             set +e
             time nix develop -c bbdev compiler --build "--chip ${PROVISION_CHIP}"
             COMPILER_RC=$?
             set -e
             if [ "$COMPILER_RC" -ne 0 ]; then
-              echo "编译器构建失败交由门禁轮裁决（compilerTouched=true：本 PR 触及 ball/core 的" \
-                   "compiler/**，编译器构建是门禁轮要裁决的验证内容而非 CI 基建；exit=${COMPILER_RC}）。"
+              echo "编译器构建失败交由门禁轮裁决（provision_exempt=true：本 PR 触及 ball/core 的" \
+                   "compiler/**，且本轮 plan 会自行前置 config install → compiler build，编译器构建" \
+                   "是门禁轮要裁决的验证内容而非 CI 基建；exit=${COMPILER_RC}）。"
             fi
             echo "::endgroup::"
           else
-            echo "::group::bbdev compiler --build (incremental)"
+            echo "::group::bbdev compiler --build (incremental；provision_exempt=false → 失败真红)"
             time nix develop -c bbdev compiler --build "--chip ${PROVISION_CHIP}"
             echo "::endgroup::"
           fi
           # —— workload 处置（same-flag-skip，只豁免不降级）——
           # 推演：workload clean/build 依赖编译器产物。compiler 炸了 workload 必炸（同一错，
           #   重跑只会把门禁轮已接手的裁决再预演一遍并可能报红），但 workload 炸了不代表 compiler
-          #   炸——所以只有「本轮 compilerTouched=true 且编译器确实构建失败」时才 same-flag-skip
-          #   workload；compiler 成功（无论 touched 与否）或 touched=false 时 workload 照旧跑且其
-          #   非零退出真红（裸命令在 set -e 下），因为那不再是编译器写集问题的连带。
+          #   炸——所以只有「本轮豁免生效（provision_exempt=true）且编译器确实构建失败」时才
+          #   same-flag-skip workload；compiler 成功（无论 exempt 与否）或 exempt=false 时 workload
+          #   照旧跑且其非零退出真红（裸命令在 set -e 下），因为那不再是编译器写集问题的连带。
           echo "::group::bbdev workload --clean + --build (incremental)"
           if [ "$COMPILER_RC" -ne 0 ]; then
             echo "workload --clean/--build skipped（same-flag-skip）：编译器构建本轮已失败并交由门禁轮" \
@@ -703,18 +752,29 @@ jobs:
           # 它区分「既有条目还是占位、可升级」与「已锚定好归因、绝不降级」。非占位则不打此 marker。
           [ "$ERR_PLACEHOLDER" = "1" ] && printf '%s\n' "<!-- bb-verify:err-line placeholder -->" >> "$BODYF"
           # 5) 幂等：**按 run 去重**（marker 只含 run=，attempt 写在正文里做审计）。已有同 run 的
-          #    INFRA 条目 → PATCH 同一条、正文更新而非再贴（重跑 attempt+1 走的就是这支）；本步
-          #    有机内 per-step 日志，归因一定不比 hosted 侧差，所以这里可以无条件 PATCH。
+          #    INFRA 条目 → PATCH 同一条、正文更新而非再贴（重跑 attempt+1 走的就是这支）。
+          #    但 PATCH 不降级（与 hosted 侧同一规则、同一 marker 口径，见头注「写路径分工」）：
+          #    既有那条已锚定真错误行（无占位 marker）、而本条只是占位串时**站开不覆盖**——
+          #    本步虽有 per-step tee 日志，但重跑那一轮完全可能换失败步、甚至一步都没跑到
+          #    （例如 attempt+1 挂在更前面的步上，steplogs 是新的空目录），无条件 PATCH 会把
+          #    上一轮已经锚好的归因擦成占位串。
           #    body 必须走 --input + jq -Rs 的 JSON（gh api -f 是 raw string，**不**展开 @file，
           #    会把 "@/tmp/.../infra-body.md" 这串字面量写进评论）。
-          EXIST_ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+          EXIST=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
             | jq -sr --arg m "bb-verify:ci-error run=$RUN_ID" \
-            '[ .[][] | select(.body | contains($m)) | .id ] | (last // empty)')
+              --arg ph "<!-- bb-verify:err-line placeholder -->" \
+              '[ .[][] | select(.body | contains($m)) ] | (last // empty)
+               | "\(.id // "")\t\((.body | contains($ph)) | tostring)"')
+          EXIST_ID="${EXIST%%$'\t'*}"; EXIST_PLACEHOLDER="${EXIST##*$'\t'}"
           if [ -n "$EXIST_ID" ]; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
-              --input <(jq -Rs '{body:.}' "$BODYF") >/dev/null \
-              && echo "report-ci-error: PATCHed existing INFRA comment id=$EXIST_ID (attempt $ATTEMPT)" \
-              || echo "report-ci-error: PATCH failed (best-effort, ignored)"
+            if [ "$ERR_PLACEHOLDER" = "1" ] && [ "$EXIST_PLACEHOLDER" = "false" ]; then
+              echo "report-ci-error: comment id=$EXIST_ID already anchors a real error line while this attempt's is a placeholder -- standing down, no downgrade"
+            else
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXIST_ID" \
+                --input <(jq -Rs '{body:.}' "$BODYF") >/dev/null \
+                && echo "report-ci-error: PATCHed existing INFRA comment id=$EXIST_ID (attempt $ATTEMPT, existing-is-placeholder=$EXIST_PLACEHOLDER)" \
+                || echo "report-ci-error: PATCH failed (best-effort, ignored)"
+            fi
           else
             gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$BODYF" \
               && echo "report-ci-error: posted new INFRA comment" \
