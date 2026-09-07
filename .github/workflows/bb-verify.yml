@@ -284,12 +284,13 @@ jobs:
           #   前置 config install → compiler build 的组合 = 无 phase 基线（workload/ / ball/ /
           #   chip/ 三种 stage 都算，chip 基线与 skeleton 是恒定前置，另两者由 compilerTouched
           #   决定）+ ball/c-bemu + ball/rtl + chip/skeleton + chip/slices + chip/integrate；
-          #   **唯一不前置的合法组合是 chip/bind**（bind 只走 modelCoverage(true)，
-          #   bbdev-plan.ts:336-341），而 bind 的 `workload --build --model` 实物上仍消费编译器
-          #   产物（bb-tests/workloads/CMakeLists.txt:14-17 从 $ENV{BUDDY_MLIR_BUILD_DIR}/bin 取
-          #   buddy-opt/buddy-translate/buddy-llc）⇒ 若照旧豁免，那一轮就是拿热树里残留的旧
-          #   编译器跑绿，PR 弄坏的编译器无人裁决。bind 因此不豁免：编译器构建失败在 Provision
-          #   真红（INFRA 评论带着错误行，可归因），宁红不假绿。
+          #   **唯一不前置的合法组合是 chip/bind**（该分支只走 modelCoverage(true)），而 bind 的
+          #   `workload --build --model` 实物上仍消费编译器产物
+          #   （$BB/bb-tests/workloads/CMakeLists.txt:14-17 把 BUDDY_BINARY_DIR 定为
+          #   $ENV{BUDDY_MLIR_BUILD_DIR}/bin 并从中取 buddy-opt / buddy-translate / buddy-llc）
+          #   ⇒ 若照旧豁免，那一轮就是拿热树里残留的旧编译器跑绿，PR 弄坏的编译器无人裁决。
+          #   bind 因此不豁免：编译器构建失败在 Provision 真红（INFRA 评论带着错误行，可归因），
+          #   宁红不假绿。
           # stage 取 [stage] 的 effective（prompt.ts 消费条 3），phase 取清单声明值
           # （validate-manifest 同款 parseManifest）；任一取不到（清单非法、effective 无法判定）
           # 都**不算**豁免——豁免需要「本轮会重跑 compiler build」的正面证据。
