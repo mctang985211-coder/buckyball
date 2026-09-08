@@ -33,6 +33,7 @@ set(PEBBLE_BALL_COMPILER_DIALECT_DIRS
   ${BB_REPO_ROOT}/examples/balls/int8add/compiler/src/Dialect/Buckyball
   ${BB_REPO_ROOT}/examples/balls/int8mul/compiler/src/Dialect/Buckyball
   ${BB_REPO_ROOT}/examples/balls/layernorm/compiler/src/Dialect/Buckyball
+  ${BB_REPO_ROOT}/examples/balls/silu/compiler/src/Dialect/Buckyball
 )
 
 set(BB_CORE_BACKEND_INTRINSICS_DIR

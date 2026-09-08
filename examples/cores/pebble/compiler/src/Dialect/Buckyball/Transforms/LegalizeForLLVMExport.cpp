@@ -78,6 +78,13 @@ void populateLayerNormBallLegalizeForLLVMExportPatterns(
     int64_t bankDepth, bool rushB);
 void configureLayerNormBallLegalizeForExportTarget(LLVMConversionTarget &target,
                                                    bool stable);
+void populateSiluBallLegalizeForLLVMExportPatterns(LLVMTypeConverter &converter,
+                                                   RewritePatternSet &patterns,
+                                                   bool stable,
+                                                   int64_t bankDepth,
+                                                   bool rushB);
+void configureSiluBallLegalizeForExportTarget(LLVMConversionTarget &target,
+                                              bool stable);
 } // namespace mlir::buddy::buckyball
 
 void mlir::populateBuckyballLegalizeForLLVMExportPatterns(
@@ -111,6 +118,8 @@ void mlir::populateBuckyballLegalizeForLLVMExportPatterns(
       converter, patterns, stable, bankDepth, rushB);
   mlir::buddy::buckyball::populateLayerNormBallLegalizeForLLVMExportPatterns(
       converter, patterns, stable, bankDepth, rushB);
+  mlir::buddy::buckyball::populateSiluBallLegalizeForLLVMExportPatterns(
+      converter, patterns, stable, bankDepth, rushB);
 }
 
 void mlir::configureBuckyballLegalizeForExportTarget(
@@ -138,4 +147,6 @@ void mlir::configureBuckyballLegalizeForExportTarget(
                                                                      stable);
   mlir::buddy::buckyball::configureLayerNormBallLegalizeForExportTarget(target,
                                                                         stable);
+  mlir::buddy::buckyball::configureSiluBallLegalizeForExportTarget(target,
+                                                                   stable);
 }
