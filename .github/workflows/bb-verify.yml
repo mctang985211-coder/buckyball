@@ -29,7 +29,7 @@
 #     变量（见 ci/settings.ci.yaml）。
 #
 # 确定性预判：stage 推断 / 证据清单 schema 校验 / 模型绑定三源检查 / slices 证据查证 /
-# perf 轮上轮 probe 取证由 verify-runner/scripts/ 下五个纯 node 脚本在「Deterministic
+# perf 轮上轮 probe 取证由 packages/verify-runner/scripts/ 下五个纯 node 脚本在「Deterministic
 # verdict inputs」步骤产出并注入 task-prompt.md（prompt.ts 只消费不重新判定）；
 # Run verify-runner 之后有双门禁：评论在场门禁（comments∪reviews 缺 VERDICT 首行
 # 即红）与只读门禁（会话前后 tracked diff 逐字节比对）。
@@ -143,14 +143,14 @@ jobs:
           echo "pnpm at $(command -v pnpm): $(pnpm --version)"
           for path in \
             /home/ROXY/code/deepseek-harness \
-            /home/ROXY/code/bb_work/dsh-plugin/verify-runner/ci/settings.ci.yaml \
+            /home/ROXY/code/bb_work/dsh-plugin/packages/verify-runner/ci/settings.ci.yaml \
             "$BB_VERIFY_ROOT/.git" \
             "$BB_VERIFY_ROOT/bbdev/api/.venv/bin/motia" \
             "$BB_VERIFY_ROOT/bebop/src/nodes/bemu/native/spike/configure.ac" ; do
             [ -e "$path" ] || {
               echo "::error::missing local path: $path"
               echo "::error::持久化根未 bootstrap 或一次性产物缺失 —— 在本机跑一次" \
-                   "dsh-plugin/verify-runner/ci/bootstrap-persistent-root.sh"
+                   "dsh-plugin/packages/verify-runner/ci/bootstrap-persistent-root.sh"
               exit 1; }
           done
           [ -n "$DEEPSEEK_API_KEY" ] || {
@@ -225,7 +225,7 @@ jobs:
           echo "persistent root at $(git -C "$BB_VERIFY_ROOT" log --oneline -1)"
 
       # 确定性预判（2026-09-06 起，stage/清单/绑定/slices 证据/perf 轮上轮 probe 五判定由脚本产出，
-      # 不再是 prompt 恳求）：脚本直接跑本机检出的 verify-runner/scripts（纯 node，
+      # 不再是 prompt 恳求）：脚本直接跑本机检出的 packages/verify-runner/scripts（纯 node，
       # 无构建依赖；cp -a staging 在后面的 Stage dsh-plugin 步骤才发生，故此处
       # 引用本机绝对路径而非 $DSH_PLUGIN_DIR）。判定块注入 task-prompt.md 尾部，
       # prompt.ts 只消费不重新判定；validate/binding 的 PRE-FAIL 让会话直接回贴
@@ -243,7 +243,7 @@ jobs:
           # 错误正则会误抓 PR 散文里的 "error:"）。
           mkdir -p "$RUNNER_TEMP/steplogs"
           exec 2> >(tee "$RUNNER_TEMP/steplogs/verdict_inputs.log" >&2)
-          export SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
+          export SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/packages/verify-runner/scripts
           # infer-stage 先单独落盘：它的输出既进 task-prompt.md 判定块（[stage] 段），又被下面
           # 抽 compilerTouched 写进 $GITHUB_OUTPUT——这是 Provision 编译器构建处置（set +e 捕获
           # rc + workload same-flag-skip）的打通点，见本步豁免位注记与下方 provision 步的推演注记。
@@ -337,7 +337,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/steplogs"
           exec > >(tee "$RUNNER_TEMP/steplogs/provision.log") 2>&1
           cd "$BB_VERIFY_ROOT"
-          export SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/verify-runner/scripts
+          export SCRIPTS=/home/ROXY/code/bb_work/dsh-plugin/packages/verify-runner/scripts
           PROVISION_CHIP=$(node --input-type=module -e '
             import { readFileSync, existsSync } from "node:fs"
             const { parseManifest } = await import(`file://${process.env.SCRIPTS}/manifest.mjs`)
@@ -420,7 +420,7 @@ jobs:
           mkdir -p "$DSH_PLUGIN_DIR"
           # 从本机检出复制（cp 会带上未提交的新文件，这正是 Phase 2 物料所需要的）；
           # node_modules/lib 一并重装重建，CI 验证的是干净构建。
-          cp -a /home/ROXY/code/bb_work/dsh-plugin/verify-runner "$DSH_PLUGIN_DIR/verify-runner"
+          cp -a /home/ROXY/code/bb_work/dsh-plugin/packages/verify-runner "$DSH_PLUGIN_DIR/verify-runner"
           rm -rf "$DSH_PLUGIN_DIR/verify-runner/node_modules" "$DSH_PLUGIN_DIR/verify-runner/lib"
           cd "$DSH_PLUGIN_DIR/verify-runner"
           pnpm install
