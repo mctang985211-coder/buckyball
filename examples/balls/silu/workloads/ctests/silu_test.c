@@ -8,7 +8,14 @@
 /* Golden SiLU: y = x / (1 + e^{-x}) (reference: torch.nn.functional.silu).
  * IEEE double with a 9-term Taylor exp and an exact 2^k bit-scaled exponent
  * (no libm), term-for-term identical to silu_gold() in examples/balls/silu/
- * emu/src/59_silu.rs and to the mlir_tests check_result. */
+ * emu/src/59_silu.rs and to the mlir_tests check_result.
+ *
+ * Fail-hard table (identical in this model, emu panics, compiler checks and
+ * the RTL asserts): xs2 != 0, rs1 BANK1 != 0, n == 0, n % 4 != 0,
+ * n > 4*bank lines, bank id >= bank_num, bank not single-group, in_bank ==
+ * out_bank.  Green ctests cannot trigger the violations (a violation fails
+ * the run by design), so the table is documented here instead - same
+ * disposition as the in-tree layernorm precedent. */
 static double silu_exp_neg(double y) { /* exp(y), y in [-100, 0] */
   int k = (int)(y * 1.4426950408889634 - 0.5);
   double f = y - (double)k * 0.6931471805599453;
