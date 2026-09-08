@@ -28,5 +28,6 @@ include "MaxPoolBall.td"
 include "Int8AddBall.td"
 include "Int8MulBall.td"
 include "LayerNormBall.td"
+include "SiluBall.td"
 
 #endif // PEBBLE_BUCKYBALL_OPS
