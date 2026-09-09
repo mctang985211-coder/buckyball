@@ -25,6 +25,7 @@ _MODELS: dict[str, tuple[str, str]] = {
     "buddynext": ("buddynext", "buddy-buckyball-buddynext-all-run"),
     "pythia": ("pythia", "buddy-buckyball-pythia-run"),
     "smollm": ("smollm", "buddy-buckyball-smollm-run"),
+    "smollm2": ("smollm2", "buddy-buckyball-smollm2-run"),
 }
 
 _RUSHB: dict[str, dict[str, str]] = {
