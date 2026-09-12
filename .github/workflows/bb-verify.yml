@@ -144,9 +144,9 @@ jobs:
       resolved_sha: ${{ steps.prepare.outputs.resolved_sha }}
     env:
       BB_VERIFY_ROOT: /home/ROXY/bb-verify/buckyball
-      # ref 模式的结论产物目录（verdict.txt + report.md → bb-verify-verdict artifact）。
-      # 静态 YAML 无法按模式开关，pr 模式从不读它；目录由 mode 步按需 mkdir。
-      VERIFY_OUT: ${{ runner.temp }}/verify-out
+      # ref 模式的结论产物目录（verdict.txt + report.md → bb-verify-verdict artifact）
+      # 由 mode 步经 $GITHUB_ENV 注入 VERIFY_OUT（runner 上下文在 job 级 env 不可用，
+      # 写静态 ${{ runner.temp }} 会让整个 workflow 解析失败）；pr 模式从不读它。
     steps:
       # 只为拿到 $GITHUB_WORKSPACE 存放 task-prompt.md / pr-context.json，以及
       # 后续步骤引用的 runner 侧文件；不再在这里检出 PR 代码/子模块（持久化根
@@ -176,6 +176,8 @@ jobs:
           SHA_INPUT: ${{ inputs.sha }}
         run: |
           set -euo pipefail
+          VERIFY_OUT="$RUNNER_TEMP/verify-out"
+          echo "VERIFY_OUT=$VERIFY_OUT" >> "$GITHUB_ENV"
           LAYER=${{ inputs.layer || 'merge' }}
           echo "LAYER=$LAYER" >> "$GITHUB_ENV"
           if [ -n "$PR" ] && [ -n "$REF_INPUT" ]; then
