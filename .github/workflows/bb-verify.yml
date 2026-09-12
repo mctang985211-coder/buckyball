@@ -176,7 +176,12 @@ jobs:
           SHA_INPUT: ${{ inputs.sha }}
         run: |
           set -euo pipefail
-          VERIFY_OUT="$RUNNER_TEMP/verify-out"
+          # ref 模式的结论产物目录必须落在会话 sandbox 可写根内：headless 会话以
+          # workspace-write 沙箱跑在 dsh 检出（/home/ROXY/code/deepseek-harness）上，
+          # $RUNNER_TEMP 在沙箱外——2026-09-13 实证 agent 写 report.md 被拒
+          # （[sandbox: file access denied under workspace-write mode]）。该检出是 CI
+          # 专用，runner 单并发，ref 分支里每次 run 清空重建，无串扰。
+          VERIFY_OUT=/home/ROXY/code/deepseek-harness/.bb-verify-out
           echo "VERIFY_OUT=$VERIFY_OUT" >> "$GITHUB_ENV"
           LAYER=${{ inputs.layer || 'merge' }}
           echo "LAYER=$LAYER" >> "$GITHUB_ENV"
@@ -200,6 +205,7 @@ jobs:
             MODE=ref
             echo "REF=$REF_INPUT" >> "$GITHUB_ENV"
             echo "EXPECTED_SHA=$SHA_INPUT" >> "$GITHUB_ENV"
+            rm -rf "$VERIFY_OUT"
             mkdir -p "$VERIFY_OUT"
           else
             if [ -n "$SHA_INPUT" ]; then
@@ -855,8 +861,8 @@ jobs:
         with:
           name: bb-verify-verdict
           path: |
-            ${{ runner.temp }}/verify-out/verdict.txt
-            ${{ runner.temp }}/verify-out/report.md
+            /home/ROXY/code/deepseek-harness/.bb-verify-out/verdict.txt
+            /home/ROXY/code/deepseek-harness/.bb-verify-out/report.md
           if-no-files-found: warn
 
       # 失败回流（2026-09-06 加固轮）：runner 还活着、但 job 因基础设施原因变红时（四
