@@ -240,6 +240,11 @@ jobs:
           done
           [ -n "$DEEPSEEK_API_KEY" ] || {
             echo "::error::repo secret DEEPSEEK_API_KEY 未配置（人工闸门 ②）"; exit 1; }
+          # UA 改写中继（agentrouter 客户端白名单闸门，见 settings.ci.yaml 头注）必须在
+          # 会话起跑前在线——TCP 探活即可；挂了就显式报红，不让 dsh 会话中期暴雷。
+          timeout 3 bash -c '</dev/tcp/127.0.0.1/8788' || {
+            echo "::error::ua-relay (127.0.0.1:8788) 不在线 —— systemctl --user restart bb-verify-ua-relay.service"
+            exit 1; }
 
       # 持久化根 prepare（flock + fetch 目标 head + detach checkout + 增量 submodule）。
       # 模式分支：pr = fetch refs/pull/<N>/head（WANT_SHA 取自 gh pr view）；
