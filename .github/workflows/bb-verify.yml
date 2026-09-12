@@ -289,9 +289,11 @@ jobs:
           if [ "$MODE" = "pr" ]; then
             git -C "$BB_VERIFY_ROOT" fetch --force origin "refs/pull/${PR}/head"
           else
-            git -C "$BB_VERIFY_ROOT" fetch --force origin "refs/heads/${REF}"
-            # ref-context.mjs 的 files = 与 origin/main 的 name-only diff，base 必须新鲜
+            # ref-context.mjs 的 files = 与 origin/main 的 name-only diff，base 必须新鲜。
+            # 顺序有讲究：checkout 消费 FETCH_HEAD，而后一次 fetch 会覆盖前一次的
+            # FETCH_HEAD——必须先 fetch main，把目标 ref 留在最后一次 fetch。
             git -C "$BB_VERIFY_ROOT" fetch --force origin main
+            git -C "$BB_VERIFY_ROOT" fetch --force origin "refs/heads/${REF}"
           fi
           git -C "$BB_VERIFY_ROOT" checkout --detach --force FETCH_HEAD
           # 换源（bbdev/e2e → 个人 fork）后必须 sync：update --init 对已 init 的
