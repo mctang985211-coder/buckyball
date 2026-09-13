@@ -5,7 +5,10 @@
 #   bb-verify.yml；本 workflow 的上游对照物只有两份：.github/workflows/check.yaml 与
 #   .github/workflows/regression.yml（文件名是稳定锚点，具体行号/pin 一律现查）。
 #   凡与本文件冲突的上游事实，以那两份为准；本文件出现的本机路径 / label / secret 名 /
-#   持久化根都是这台机器的部署细节。
+#   持久化根都是这台机器的部署细节。两份上游文件的验证内容已吸收进本流程而非改写上游：
+#   check.yaml 的 pre-commit 作业 = 本文件的 Pre-commit gate 步；regression.yml 的 EDA
+#   车道（dc/uvm/bebop-p2e）= 插件侧 bbdev-plan.ts 的 EDA_LANES（complete 层，逐 chip
+#   条件与上游矩阵一致，工具缺失即 INFRA）。上游两份文件本身不动。
 #
 # 触发与输入（2026-09-13 起 ref-only，PR 模式已整体删除，无任何 PR 通道）：
 #   只收 workflow_dispatch。harness 用户把临时分支 verify/<yyyyMMdd-HHmmss>-<shortsha>
@@ -14,8 +17,10 @@
 #     dispatch，main 之类直接拒，由 Validate ref inputs 步强制）；
 #   - sha   —— 必填，期望的分支 head（40-hex）；prepare 在 flock 临界区内与实测 HEAD
 #     精确比对（竞态守卫：push 与 dispatch 之间分支被再推即红）；
-#   - layer —— merge=门禁层（快，bemu 全批）/ complete=重验证（叠加 pk-tests 与
-#     verilator）。
+#   - layer —— merge=门禁层（快，pre-commit 门禁 + bemu 全批；≈ 上游 check.yaml 面）/
+#     complete=重验证（≈ check.yaml + regression.yml：叠加 pk-tests 与 verilator，并由
+#     plan 工具追加 dc/uvm/bebop-p2e 的 EDA 车道——仅当上游矩阵对本 chip 启用且本机
+#     探到 dc_shell/vcs/vivado；该跑而缺工具 = INFRA 环境缺口，不是 FAIL）。
 #   安全模型：verify/* 命名空间闸 + 会话对持久化根只读门禁（会话前后 tracked diff
 #   逐字节比对）+ 全文件没有任何 PR 写面（无 pull-requests 权限，会话被禁止
 #   gh pr comment / gh pr review——写进 task-prompt.md 头）。全文件无任何明文
@@ -99,10 +104,12 @@ on:
         description: 'Expected head sha of ref (40-hex race guard, compared against the checked-out HEAD)'
         type: string
         required: true
-      # 分层门禁：merge=门禁层（快，bemu 全批）；complete=重验证（叠加 pk-tests 与
-      # verilator）。
+      # 分层门禁：merge=门禁层（快；≈ check.yaml 面：pre-commit 门禁步 + bemu 全批）；
+      # complete=重验证（≈ check.yaml + regression.yml：叠加 pk-tests、verilator 与
+      # dc/uvm/bebop-p2e 的 EDA 车道——逐 chip 条件同上游矩阵，且需本机有
+      # dc_shell/vcs/vivado；该跑而缺工具 → INFRA）。
       layer:
-        description: 'Verification layer (merge = fast gate, complete = heavy re-verify)'
+        description: 'Verification layer (merge = fast gate ≈ check.yaml, complete = heavy re-verify ≈ check.yaml + regression.yml EDA lanes)'
         type: choice
         options: [merge, complete]
         default: merge
@@ -284,6 +291,51 @@ jobs:
           node "$HARNESS_PKG/scripts/ref-context.mjs" \
             --repo "$BB_VERIFY_ROOT" --ref "$REF" --sha "$RESOLVED_SHA" --out context.json
 
+      # pre-commit 门禁（对齐上游 check.yaml 的 pre-commit 作业：
+      # nix develop -c pre-commit run --all-files；上游另带
+      # --show-diff-on-failure --color=always，这里输出落日志文件，失败路径 tail
+      # 呈现）。上游该作业不跑 nix build 直接进 dev shell，这里同样（pre-commit 是
+      # devShell 工具，热 nix store 下秒级）。先删 bb-verify-task.md：它是 dispatch
+      # 元数据，已被上一步 ref-context.mjs 消费进 context.json，删掉后 pre-commit
+      # 检查的才是用户写的真实树；删除发生在 Snapshot diff 基线之前，只读门禁的
+      # 基线会把这次删除（以及 hooks 的任何 auto-fix 改写）吸收进去，不受影响。
+      # 失败 = 被验证内容没过真实门禁 → VERDICT: FAIL，不是 INFRA（runner 与工具
+      # 都正常，是分支本身不过 lint；pre-commit 的 auto-fixer 改写文件同样是非零
+      # 退出，那正是上游的失败语义，不规避）。红后由 Finalize/Archive/Post
+      # terminal status 的 always() 链收尾：verdict.txt 已写 FAIL，终态
+      # status=failure，report.md 随 artifact 上传。
+      - name: Pre-commit gate (upstream check.yaml parity)
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          cd "$BB_VERIFY_ROOT"
+          rm -f bb-verify-task.md
+          LOG="$RUNNER_TEMP/pre-commit.log"
+          set +e
+          nix develop -c pre-commit run --all-files > "$LOG" 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            printf 'VERDICT: FAIL\n' > "$VERIFY_OUT/verdict.txt"
+            {
+              echo "# bb-verify: pre-commit gate FAILED"
+              echo
+              echo "- ref: $REF"
+              echo "- head sha: $RESOLVED_SHA"
+              echo "- layer: $LAYER"
+              echo "- gate: \`nix develop -c pre-commit run --all-files\`（上游 check.yaml pre-commit 作业等价物），exit=$RC"
+              echo
+              echo "## hook 输出尾部（完整输出见 CI 日志本步骤）"
+              echo '```'
+              tail -n 80 "$LOG"
+              echo '```'
+            } > "$VERIFY_OUT/report.md"
+            echo "::error::pre-commit gate FAILED (exit=$RC) —— VERDICT: FAIL（被验证内容没过真实门禁）；report.md 见 bb-verify-verdict artifact"
+            cat "$LOG"
+            exit 1
+          fi
+          echo "pre-commit gate: PASS"
+
       # 确定性预判（2026-09-06 起，stage/清单/绑定/slices 证据/perf 轮上轮 probe 五判定由脚本产出，
       # 不再是 prompt 恳求）：脚本直接跑本机检出的 $HARNESS_PKG/scripts（纯 node，
       # 无构建依赖；cp -a staging 在后面的 Stage dsh-plugin 步骤才发生，故此处
@@ -349,11 +401,19 @@ jobs:
           fi
           echo "provision_exempt=$PROVISION_EXEMPT" >> "$GITHUB_OUTPUT"
           echo "verdict_inputs: compilerTouched=$COMPILER_TOUCHED effective=${EFFECTIVE:-<无法判定>} phase=${MANIFEST_PHASE:-<无>} → provision_exempt=$PROVISION_EXEMPT（\$GITHUB_OUTPUT；provision 步的编译器构建处置依据）"
+          # runner EDA 能力探测（complete 层 regression.yml EDA 车道的前置事实）：
+          # dc_shell/vcs/vivado 不在 nix env，属宿主机安装（上游 regression.yml 靠
+          # source 宿主 shell rc 引入）——这里探的是本 job 的实际 PATH，与 plan 工具
+          # 的探测口径一致（bbdev-plan.ts 复用 bbdev-common 的 findOnPath，同扫 PATH）。
+          probe_eda() { command -v "$1" >/dev/null 2>&1 && echo yes || echo no; }
+          EDA_CAP="dc_shell=$(probe_eda dc_shell) vcs=$(probe_eda vcs) vivado=$(probe_eda vivado)"
+          echo "verdict_inputs: runner EDA capability: $EDA_CAP"
           {
             # task-prompt 头：没有 PR —— 结论通道是 stdout 的 VERDICT 行 +
             # $VERIFY_OUT/report.md（随 bb-verify-verdict artifact 上传）；禁止
             # gh pr comment / gh pr review（没有可贴对象，空跑只是浪费轮次）。
-            echo "验证临时分支 $REF（head ${RESOLVED_SHA:0:8}）。验证层级：$LAYER（merge=门禁层；complete=重验证）。"
+            echo "验证临时分支 $REF（head ${RESOLVED_SHA:0:8}）。验证层级：$LAYER（merge=门禁层 ≈ check.yaml；complete=重验证 ≈ check.yaml + regression.yml EDA 车道）。"
+            echo "runner EDA capability: $EDA_CAP（complete 层 EDA 车道的工具前置；dc/uvm/bebop-p2e 车道该跑而此处为 no → plan 会把该 lane 记进 blockedLanes，结论 INFRA 点名缺失工具）"
             echo
             echo "重要：本次验证没有 PR。禁止运行 gh pr comment / gh pr review。"
             echo "最终结论必须同时落在两处："
