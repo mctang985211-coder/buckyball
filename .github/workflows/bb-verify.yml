@@ -1,733 +1,141 @@
-# bb-verify — verify-runner CI workflow（持久化 CI 工作区模式，ref-only）
-#
-# ⚠ 定位声明：本文件与其同目录的 bootstrap-persistent-root.sh / runner-setup.md 是
-#   **fork/本机部署物料，不是上游交付物**。上游 DangoSys/buckyball 里没有
-#   bb-verify.yml；本 workflow 的上游对照物只有两份：.github/workflows/check.yaml 与
-#   .github/workflows/regression.yml（文件名是稳定锚点，具体行号/pin 一律现查）。
-#   凡与本文件冲突的上游事实，以那两份为准；本文件出现的本机路径 / label / secret 名 /
-#   持久化根都是这台机器的部署细节。两份上游文件的验证内容已吸收进本流程而非改写上游：
-#   check.yaml 的 pre-commit 作业 = 本文件的 Pre-commit gate 步；regression.yml 的 EDA
-#   车道（dc/uvm/bebop-p2e）= 插件侧 bbdev-plan.ts 的 EDA_LANES（complete 层，逐 chip
-#   条件与上游矩阵一致，工具缺失即 INFRA）。上游两份文件本身不动。
-#
-# 触发与输入（2026-09-13 起 ref-only，PR 模式已整体删除，无任何 PR 通道）：
-#   只收 workflow_dispatch。harness 用户把临时分支 verify/<yyyyMMdd-HHmmss>-<shortsha>
-#   推到 fork，dispatch 带三个输入：
-#   - ref   —— 必须匹配 ^verify/[A-Za-z0-9._-]+$（安全闸：只有 verify/* 命名空间可
-#     dispatch，main 之类直接拒，由 Validate ref inputs 步强制）；
-#   - sha   —— 必填，期望的分支 head（40-hex）；prepare 在 flock 临界区内与实测 HEAD
-#     精确比对（竞态守卫：push 与 dispatch 之间分支被再推即红）；
-#   - layer —— merge=门禁层（快，pre-commit 门禁 + bemu 全批；≈ 上游 check.yaml 面）/
-#     complete=重验证（≈ check.yaml + regression.yml：叠加 pk-tests 与 verilator，并由
-#     plan 工具追加 dc/uvm/bebop-p2e 的 EDA 车道——仅当上游矩阵对本 chip 启用且本机
-#     探到 dc_shell/vcs/vivado；该跑而缺工具 = INFRA 环境缺口，不是 FAIL）。
-#   安全模型：verify/* 命名空间闸 + 会话对持久化根只读门禁（会话前后 tracked diff
-#   逐字节比对）+ 全文件没有任何 PR 写面（无 pull-requests 权限，会话被禁止
-#   gh pr comment / gh pr review——写进 task-prompt.md 头）。全文件无任何明文
-#   key：LLM key 只经 repo secret DEEPSEEK_API_KEY 注入（Run verify-runner 步骤
-#   env）；provider 配置用 apiKeyEnv 引用同名环境变量（见 ci/settings.ci.yaml）。
-#
-# 持久化根模式：验证本体不在 runner _work 的临时 checkout 里执行，而是固定使用本机
-#   持久化根 $BB_VERIFY_ROOT（由 ci/bootstrap-persistent-root.sh 一次性 bootstrap：
-#   clone + 全量子模块 + nix build + bbdev api venv + bebop spike + compiler/workload
-#   冷树首构）。理由：执行依赖用户目录内已初始化的环境（热 nix store / 热构建树），
-#   runner _work 只做轻量编排（生成 task-prompt、staging 插件、跑 dsh）；check.yaml
-#   同样用持久化检出 + 每 run 增量跑 nix build / bbdev config --install /
-#   compiler --build / workload --build / bebop-bemu --batch。本 workflow 的
-#   provision 序列与上游一致，实测热树各步耗时见步骤注释（首次 bootstrap 见脚本头注）。
-#
-# 上下文合成与确定性预判：prepare 之后由 scripts/ref-context.mjs 从持久化根合成
-#   context.json（title=commit subject；body=仓库根 bb-verify-task.md 或 commit
-#   body；files=与 origin/main 的 name-only diff；comments/reviews 空）；stage 推断 /
-#   证据清单 schema 校验 / 模型绑定三源检查 / slices 证据查证 / perf 轮上轮 probe
-#   五判定由 scripts/ 下五个纯 node 脚本在「Deterministic verdict inputs」步骤产出并
-#   注入 task-prompt.md（prompt.ts 只消费不重新判定）。Run verify-runner 之后有双门禁：
-#   结论产物门禁（verdict.txt 可解析 + report.md 非空，缺一即红）与只读门禁（会话前后
-#   tracked diff 逐字节比对）。
-#
-# 结论通道（两处，再无第三处）：
-#   1) commit status context=bb-verify：prepare 后挂 pending，末尾 Post terminal
-#      commit status 步写终态 success|failure|error（唯一事实源 = verdict.txt：
-#      PASS→success / FAIL→failure / 其余→error）；
-#   2) bb-verify-verdict artifact：verdict.txt（单行结论）+ report.md（会话写的完整
-#      markdown 报告）。
-#   会话契约 = stdout 单独打印一行 VERDICT: PASS|FAIL 且真实写出
-#   $VERIFY_OUT/report.md；任一缺失 → VERDICT: INFRA + job 红（fail-fast，不补
-#   占位报告——没写报告就是没完成契约，artifact 里缺 report.md 如实反映）。
-#   INFRA 语义（排它）：只表示 runner/CI 基建失败，不是被验证内容的结论；verdict-gate
-#   的解析正则只认 PASS|FAIL，INFRA 不被任何门禁当作结论。消费方（人 / dsh /
-#   ci-dispatch）见 INFRA 应**重发 dispatch** 而非读作验证结果。
-#   report 伴生作业（hosted ubuntu-latest，needs: verify + if: always()）：只覆盖
-#   「runner 整机已死、机内 post-status 步根本没跑到」的场景——目标 sha 上没有
-#   bb-verify 终态（success|failure|error）就补 state=error；已有终态（机内步是唯一
-#   权威终态作者）或探测失败（API 抖动）都站开，fail-closed，绝不覆盖机内结论。
-#
-# 单作业原因 = 单 runner slot（本机只有一台 self-hosted）+ 单一可变持久根（prepare
-#   里 flock 独占切换检出）+ 单一结论通道（一个 sha 一次只应有一个 verdict 作者）。
-#   这不是「热树不能被多作业复用」——是这三条单资源约束决定的单 verify 作业；report
-#   作业跑在 GitHub 托管 runner 上，不占本机 slot、不碰持久根，只读写 commit
-#   status API。
-
+# bb-verify — dispatch-only verification of temp branches (verify/*) on the
+# self-hosted runner's persistent checkout. No pull_request surface.
+# Contract, design and deployment: .github/workflows/bb-verify.md
+# Step logic lives in .github/scripts/bb-verify/ (one script per step).
 name: bb-verify
 
-# 最小权限：读代码（checkout）、读 actions run/job（report 作业观测面保留位）、
-# 写 commit status（bb-verify pending→终态握手与 hosted 兜底）。无 PR 写面。
 permissions:
   contents: read
   actions: read
   statuses: write
 
-# ===== 部署事实（本文件唯一的配置区）=====
-# 这个 fork 部署在这台机器上的全部机器相关字面量，集中在这里、全文件仅此一处；
-# run 块里一律用 $VARNAME 引用（都是静态 YAML 值——workflow/job 级 env 不可用
-# runner.* 上下文，历史教训）。唯一例外：Archive verdict artifact 的 path: 是 YAML
-# 层，那里保留静态字符串并带注释，必须与 VERIFY_OUT 逐字节相等。
+# ===== Deployment facts (the only machine-specific section) =====
+# Adjust these 6 values, runs-on and the PATH-fix lines to your runner host;
+# run blocks reference $VARNAME only. Sole exception: the "Archive verdict
+# artifact" path: strings (YAML cannot reference env) must byte-equal VERIFY_OUT.
 env:
-  BB_VERIFY_ROOT: /home/ROXY/bb-verify/buckyball                          # 持久化根（bootstrap-persistent-root.sh 一次性建好）
-  BB_VERIFY_LOCK: /home/ROXY/bb-verify/bb-verify.lock                     # prepare 的 flock 文件（锁目录即其父目录）
-  DSH_DIR: /home/ROXY/code/deepseek-harness                               # dsh harness 本机检出（pnpm dsh）
-  HARNESS_PKG: /home/ROXY/code/bb_work/harness/packages/verify-runner     # verify-runner 本机检出（scripts 直跑 + staging cp 源）
-  VERIFY_OUT: /home/ROXY/code/deepseek-harness/.bb-verify-out             # 结论产物目录（verdict.txt + report.md）
-  RELAY_ADDR: 127.0.0.1:8788                                              # UA 改写中继（agentrouter 白名单闸门，见 settings.ci.yaml 头注）
+  BB_VERIFY_ROOT: /home/ROXY/bb-verify/buckyball                         # persistent root (built once by bootstrap-persistent-root.sh)
+  BB_VERIFY_LOCK: /home/ROXY/bb-verify/bb-verify.lock                    # flock file serializing checkout switches on the persistent root
+  DSH_DIR: /home/ROXY/code/deepseek-harness                              # local dsh checkout (pnpm dsh)
+  HARNESS_PKG: /home/ROXY/code/bb_work/harness/packages/verify-runner    # local verify-runner checkout (scripts/*.mjs run straight from it)
+  VERIFY_OUT: /home/ROXY/code/deepseek-harness/.bb-verify-out            # verdict dir (verdict.txt + report.md); must be writable from the dsh sandbox
+  RELAY_ADDR: 127.0.0.1:8788                                             # optional host:port of a local LLM relay; empty = direct connection
 
 on:
   workflow_dispatch:
     inputs:
-      # ref 必须匹配 ^verify/[A-Za-z0-9._-]+$（安全闸：只有 verify/* 命名空间可
-      # dispatch，main 之类直接拒——Validate ref inputs 步强制）。
       ref:
-        description: 'Temp branch to verify (must match ^verify/[A-Za-z0-9._-]+$)'
+        description: 'Temp branch to verify (must match ^verify/[A-Za-z0-9._-]+$; anything else is rejected)'
         type: string
         required: true
-      # sha = 期望的分支 head（40-hex 竞态守卫，必填；prepare 里与实测 HEAD 精确比对）。
       sha:
-        description: 'Expected head sha of ref (40-hex race guard, compared against the checked-out HEAD)'
+        description: 'Expected head sha of ref (40-hex race guard, compared with the checked-out HEAD)'
         type: string
         required: true
-      # 分层门禁：merge=门禁层（快；≈ check.yaml 面：pre-commit 门禁步 + bemu 全批）；
-      # complete=重验证（≈ check.yaml + regression.yml：叠加 pk-tests、verilator 与
-      # dc/uvm/bebop-p2e 的 EDA 车道——逐 chip 条件同上游矩阵，且需本机有
-      # dc_shell/vcs/vivado；该跑而缺工具 → INFRA）。
       layer:
-        description: 'Verification layer (merge = fast gate ≈ check.yaml, complete = heavy re-verify ≈ check.yaml + regression.yml EDA lanes)'
+        description: 'merge = fast gate (pre-commit + bemu batches, ~check.yaml); complete = heavy re-verify (+ regression.yml EDA lanes)'
         type: choice
         options: [merge, complete]
         default: merge
         required: false
 
-# 持久化根是共享可变状态：同一时刻只允许一个 run 对其做 prepare + 增量构建。
-# concurrency 串行化 + 步骤内 flock 双保险（concurrency 只在 GitHub 侧排队，
-# flock 防的是本机其他入口，如人工调试）。
+# The persistent root is shared mutable state: serialize runs. The concurrency
+# group queues on the GitHub side; prepare.sh takes an flock on BB_VERIFY_LOCK
+# against local out-of-band users.
 concurrency:
   group: bb-verify-persistent-root
   cancel-in-progress: false
 
 jobs:
   verify:
-    runs-on: cpu-server # self-hosted label：nix 环境与 bbdev 都在这台机器上
-    # 基线：merge 层 6-31min，complete 层 ~40-70min；bbdev 自带轮询上限 24h，故
-    # 由 job 侧给出余量充足但确实有效的天花板。
+    runs-on: cpu-server
     timeout-minutes: 180
-    # report 作业的消费口：prepare 实测的 HEAD（commit status 兜底的对象；prepare
-    # 没跑到时 report 退回 sha 输入）。
     outputs:
       resolved_sha: ${{ steps.prepare.outputs.resolved_sha }}
     steps:
-      # 只为拿到 $GITHUB_WORKSPACE 存放 task-prompt.md / context.json，以及后续
-      # 步骤引用的 runner 侧文件；不在这里检出被验证代码/子模块（持久化根负责），
-      # 也不在这里跑任何构建。
+      # Only to obtain $GITHUB_WORKSPACE (task-prompt.md, context.json) and the
+      # .github/scripts/bb-verify/*.sh helpers. The code under test is NOT
+      # checked out here — the persistent root handles that.
       - uses: actions/checkout@v4
 
-      # runner service 的 systemd PATH 很小（不含 nix/pnpm/node 所在目录，
-      # 本机实测：nix=/nix/var/nix/profiles/default/bin，pnpm/node=/home/ROXY/.local/bin）。
-      # GITHUB_PATH 只对后续步骤生效，故必须是第一步。
+      # The runner service's systemd PATH lacks the nix/pnpm/node dirs;
+      # GITHUB_PATH applies to later steps only, so this must come first.
       - name: Fix PATH for the runner service
         run: |
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
           echo "/home/ROXY/.local/bin"             >> "$GITHUB_PATH"
 
-      # 输入校验（fail fast，先于一切重活）：ref 必须匹配 ^verify/[A-Za-z0-9._-]+$
-      # （安全闸：只有 verify/* 命名空间可 dispatch，main 之类直接拒）；sha 必填且
-      # 必须是 40 位小写十六进制（分支 head 的竞态守卫，prepare 里与实测 HEAD 精确
-      # 比对）。REF/EXPECTED_SHA/LAYER 进 $GITHUB_ENV 供全 job 使用。
-      # 输入一律经 env 注入（不经 ${{ }} 直接拼进脚本），先校验字符集再落
-      # GITHUB_ENV——写进 GITHUB_ENV 的值不进 shell 解析，无注入面。
-      # VERIFY_OUT 落在会话 sandbox 可写根内：headless 会话以 workspace-write 沙箱
-      # 跑在 dsh 检出（$DSH_DIR）上，$RUNNER_TEMP 在沙箱外——2026-09-13 实证 agent
-      # 写 report.md 被拒（[sandbox: file access denied under workspace-write
-      # mode]）。该检出是 CI 专用，runner 单并发，每次 run 清空重建，无串扰。
       - name: Validate ref inputs
         env:
           REF_INPUT: ${{ inputs.ref }}
           SHA_INPUT: ${{ inputs.sha }}
-        run: |
-          set -euo pipefail
-          LAYER=${{ inputs.layer || 'merge' }}
-          echo "LAYER=$LAYER" >> "$GITHUB_ENV"
-          if [[ ! "$REF_INPUT" =~ ^verify/[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::ref 必须匹配 ^verify/[A-Za-z0-9._-]+\$（只有 verify/* 命名空间可 dispatch），got '$REF_INPUT'"
-            exit 1
-          fi
-          if [[ ! "$SHA_INPUT" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::sha 必填且必须是 40 位小写十六进制（prepare 里与 git rev-parse 输出精确比对），got '$SHA_INPUT'"
-            exit 1
-          fi
-          echo "REF=$REF_INPUT" >> "$GITHUB_ENV"
-          echo "EXPECTED_SHA=$SHA_INPUT" >> "$GITHUB_ENV"
-          rm -rf "$VERIFY_OUT"
-          mkdir -p "$VERIFY_OUT"
-          echo "ref=$REF_INPUT sha=$SHA_INPUT layer=$LAYER"
+          LAYER_INPUT: ${{ inputs.layer || 'merge' }}
+        run: bash .github/scripts/bb-verify/validate-inputs.sh
 
       - name: Check toolchain, local prerequisites and secret
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }} # 仅做非空检查，绝不回显
-        run: |
-          set -euo pipefail
-          for tool in nix gh pnpm node; do
-            command -v "$tool" >/dev/null || { echo "::error::$tool not on PATH"; exit 1; }
-          done
-          # E1 evidence (audit 2026-08-31): record which node/pnpm the job actually
-          # resolves -- research §7.1 says bare `pnpm dsh` breaks on the flake node
-          # v24.18.0, yet this workflow runs it green; hypothesis is that the runner
-          # PATH hits ~/.local/bin/node (v24.20.0) instead. Log version + path.
-          echo "node at $(command -v node): $(node --version)"
-          echo "pnpm at $(command -v pnpm): $(pnpm --version)"
-          for path in \
-            "$DSH_DIR" \
-            "$HARNESS_PKG/ci/settings.ci.yaml" \
-            "$BB_VERIFY_ROOT/.git" \
-            "$BB_VERIFY_ROOT/bbdev/api/.venv/bin/motia" \
-            "$BB_VERIFY_ROOT/bebop/src/nodes/bemu/native/spike/configure.ac" ; do
-            [ -e "$path" ] || {
-              echo "::error::missing local path: $path"
-              echo "::error::持久化根未 bootstrap 或一次性产物缺失 —— 在本机跑一次" \
-                   "harness/packages/verify-runner/ci/bootstrap-persistent-root.sh"
-              exit 1; }
-          done
-          [ -n "$DEEPSEEK_API_KEY" ] || {
-            echo "::error::repo secret DEEPSEEK_API_KEY 未配置（人工闸门 ②）"; exit 1; }
-          # UA 改写中继（agentrouter 客户端白名单闸门，见 settings.ci.yaml 头注）必须在
-          # 会话起跑前在线——TCP 探活即可；挂了就显式报红，不让 dsh 会话中期暴雷。
-          timeout 3 bash -c "</dev/tcp/${RELAY_ADDR%:*}/${RELAY_ADDR#*:}" || {
-            echo "::error::ua-relay ($RELAY_ADDR) 不在线 —— systemctl --user restart bb-verify-ua-relay.service"
-            exit 1; }
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }} # non-empty check only, never echoed
+        run: bash .github/scripts/bb-verify/check-prereqs.sh
 
-      # 持久化根 prepare（flock + fetch 目标 head + detach checkout + 增量 submodule）。
-      # fetch 顺序有讲究：ref-context.mjs 的 files = 与 origin/main 的 name-only diff，
-      # base 必须新鲜；而 checkout 消费 FETCH_HEAD，后一次 fetch 会覆盖前一次的
-      # FETCH_HEAD——必须先 fetch main，把目标 ref 留在最后一次 fetch。
-      # 为什么不复用上游 .github/scripts/ci_repo_lock.sh prepare：
-      #   1) 它的 repo_reset 对主仓 git clean -ffd 且对 bbdev/bebop/buddy-mlir
-      #      reset --hard + clean -ffd —— 会把热树上的全部增量构建产物（buddy-mlir
-      #      build/、bb-tests/workloads/build/、.venv、spike 等 untracked 内容）每次
-      #      清空，持久化预热就被抵消了；本 workflow 的验证路径靠 batch 的
-      #      --clean-before 保证测试产物干净，主仓不整体 clean 是有意的取舍。
-      #   2) 它的锁目录写死 /tmp/buckyball-ci（多用户机器上 /tmp 归属有冲突史），
-      #      且配套 setproxy.sh 是上游的网络假设（ALL_PROXY=127.0.0.1:7890），本机
-      #      不适用。这里用 $BB_VERIFY_LOCK 的 flock 文件，语义等价（prepare = 拿锁后
-      #      独占切换检出）。
-      # 子模块处理（有意的两层设计）：
-      #   a) 根仓 `git submodule update --init`（非递归）——把 18 个一级子模块对齐
-      #      到 ref head 记录的指针；树在 bootstrap 时已全量 init，这里全是秒级
-      #      no-op。不用 --recursive 的原因：会递归进 buddy-mlir 的嵌套子模块
-      #      riscv-gnu-toolchain/tt-mlir（各数 GB，验证路径完全用不到——compiler
-      #      构建脚本只引用 llvm），每次 run 都发起大 clone 既慢又是网络单点。
-      #   b) buddy-mlir 的嵌套 llvm 子模块单独守卫：compiler 构建硬依赖
-      #      llvm/llvm 源码；bootstrap 时已按 pinned commit 装好，这里只在缺失时
-      #      才补（shallow fetch by sha，见 bootstrap 脚本）。
-      # 检出后在 flock 临界区内校验 HEAD == sha 输入（竞态守卫：push 与 dispatch
-      # 之间分支被再推即红）；比对必须在锁内做，出锁后锁外的一切都不再可信。
       - name: Prepare persistent repo (flock + head checkout + incremental submodules)
         id: prepare
-        run: |
-          set -euo pipefail
-          mkdir -p "$(dirname "$BB_VERIFY_LOCK")"
-          exec 9>"$BB_VERIFY_LOCK"
-          flock 9
-          git -C "$BB_VERIFY_ROOT" fetch --force origin main
-          git -C "$BB_VERIFY_ROOT" fetch --force origin "refs/heads/${REF}"
-          git -C "$BB_VERIFY_ROOT" checkout --detach --force FETCH_HEAD
-          # 换源（bbdev/e2e → 个人 fork）后必须 sync：update --init 对已 init 的
-          # 子模块不重读 .gitmodules 新 URL，会继续用 .git/config 里的旧 org URL。
-          git -C "$BB_VERIFY_ROOT" submodule sync
-          git -C "$BB_VERIFY_ROOT" submodule update --init
-          if [ ! -f "$BB_VERIFY_ROOT/compiler/thirdparty/buddy-mlir/llvm/llvm/CMakeLists.txt" ]; then
-            git -C "$BB_VERIFY_ROOT/compiler/thirdparty/buddy-mlir" submodule update --init llvm
-          fi
-          HAVE_SHA=$(git -C "$BB_VERIFY_ROOT" rev-parse HEAD)
-          if [ "$HAVE_SHA" != "$EXPECTED_SHA" ]; then
-            # 竞态守卫：sha 输入与实测 head 不一致 = push 后分支又被移动
-            echo "::error::persistent root at ${HAVE_SHA:0:8}, expected ref head ${EXPECTED_SHA:0:8} (sha 输入与分支 head 不一致)"
-            exit 1
-          fi
-          flock -u 9
-          # resolved_sha 是 commit status / report 兜底的对象（job outputs 消费）。
-          echo "resolved_sha=$HAVE_SHA" >> "$GITHUB_OUTPUT"
-          echo "RESOLVED_SHA=$HAVE_SHA" >> "$GITHUB_ENV"
-          echo "persistent root at $(git -C "$BB_VERIFY_ROOT" log --oneline -1)"
+        run: bash .github/scripts/bb-verify/prepare.sh
 
-      # commit status 握手①：持久化根已 prepare、sha 已知，立刻挂 pending —— 客户方
-      # 轮询的就是这个 context。终态由末尾的 Post terminal commit status 步写（机内
-      # 没跑到的场景由 hosted report 作业兜底 error）。
-      # continue-on-error 是有意的：这是报告通道，上报失败绝不翻转验证结论。
       - name: Post pending commit status
-        continue-on-error: true
+        continue-on-error: true # reporting channel; never flips the verification outcome
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$RESOLVED_SHA" \
-            -f context=bb-verify -f state=pending \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            -f description="bb-verify: run started (ref ${REF}, layer ${LAYER})"
+        run: bash .github/scripts/bb-verify/post-status.sh pending
 
-      # 上下文合成：ref-context.mjs 从已 prepare 的持久化根合成 context.json
-      # （title=commit subject，body=仓库根 bb-verify-task.md 或 commit body，
-      # files=与 origin/main 的 name-only diff，comments/reviews 空），必须排在
-      # prepare 之后（需要已 fetch 的对象）。脚本纯 git/本地文件操作，无需 GH_TOKEN。
-      # task-prompt.md 由后面的 Deterministic verdict inputs 步骤组装。
       - name: Resolve context (ref-context.mjs)
         run: |
-          set -euo pipefail
           node "$HARNESS_PKG/scripts/ref-context.mjs" \
             --repo "$BB_VERIFY_ROOT" --ref "$REF" --sha "$RESOLVED_SHA" --out context.json
 
-      # pre-commit 门禁（对齐上游 check.yaml 的 pre-commit 作业：
-      # nix develop -c pre-commit run --all-files；上游另带
-      # --show-diff-on-failure --color=always，这里输出落日志文件，失败路径 tail
-      # 呈现）。上游该作业不跑 nix build 直接进 dev shell，这里同样（pre-commit 是
-      # devShell 工具，热 nix store 下秒级）。先删 bb-verify-task.md：它是 dispatch
-      # 元数据，已被上一步 ref-context.mjs 消费进 context.json，删掉后 pre-commit
-      # 检查的才是用户写的真实树；删除发生在 Snapshot diff 基线之前，只读门禁的
-      # 基线会把这次删除（以及 hooks 的任何 auto-fix 改写）吸收进去，不受影响。
-      # 失败 = 被验证内容没过真实门禁 → VERDICT: FAIL，不是 INFRA（runner 与工具
-      # 都正常，是分支本身不过 lint；pre-commit 的 auto-fixer 改写文件同样是非零
-      # 退出，那正是上游的失败语义，不规避）。红后由 Finalize/Archive/Post
-      # terminal status 的 always() 链收尾：verdict.txt 已写 FAIL，终态
-      # status=failure，report.md 随 artifact 上传。
-      - name: Pre-commit gate (upstream check.yaml parity)
+      # Upstream check.yaml pre-commit parity. A red gate is a content failure
+      # (VERDICT: FAIL), not INFRA.
+      - name: Pre-commit gate
         timeout-minutes: 20
-        run: |
-          set -euo pipefail
-          cd "$BB_VERIFY_ROOT"
-          rm -f bb-verify-task.md
-          LOG="$RUNNER_TEMP/pre-commit.log"
-          set +e
-          nix develop -c pre-commit run --all-files > "$LOG" 2>&1
-          RC=$?
-          set -e
-          if [ "$RC" -ne 0 ]; then
-            printf 'VERDICT: FAIL\n' > "$VERIFY_OUT/verdict.txt"
-            {
-              echo "# bb-verify: pre-commit gate FAILED"
-              echo
-              echo "- ref: $REF"
-              echo "- head sha: $RESOLVED_SHA"
-              echo "- layer: $LAYER"
-              echo "- gate: \`nix develop -c pre-commit run --all-files\`（上游 check.yaml pre-commit 作业等价物），exit=$RC"
-              echo
-              echo "## hook 输出尾部（完整输出见 CI 日志本步骤）"
-              echo '```'
-              tail -n 80 "$LOG"
-              echo '```'
-            } > "$VERIFY_OUT/report.md"
-            echo "::error::pre-commit gate FAILED (exit=$RC) —— VERDICT: FAIL（被验证内容没过真实门禁）；report.md 见 bb-verify-verdict artifact"
-            cat "$LOG"
-            exit 1
-          fi
-          echo "pre-commit gate: PASS"
+        run: bash .github/scripts/bb-verify/pre-commit-gate.sh
 
-      # 确定性预判（2026-09-06 起，stage/清单/绑定/slices 证据/perf 轮上轮 probe 五判定由脚本产出，
-      # 不再是 prompt 恳求）：脚本直接跑本机检出的 $HARNESS_PKG/scripts（纯 node，
-      # 无构建依赖；cp -a staging 在后面的 Stage dsh-plugin 步骤才发生，故此处
-      # 引用本机检出而非 $DSH_PLUGIN_DIR）。判定块注入 task-prompt.md 尾部，
-      # prompt.ts 只消费不重新判定；validate/binding 的 PRE-FAIL 让会话直接回
-      # FAIL，省掉一次全批白跑。脚本非零退出 = 判定管线故障 → job 红（宁红不假绿）。
-      # 必须在持久化根 prepare 之后跑：清单/绑定的检出树核对以 ref head 为准。
       - name: Deterministic verdict inputs (stage/manifest/binding/slices/perf)
         id: verdict_inputs
-        run: |
-          set -euo pipefail
-          export SCRIPTS="$HARNESS_PKG/scripts"
-          # infer-stage 先单独落盘：它的输出既进 task-prompt.md 判定块（[stage] 段），又被下面
-          # 抽 compilerTouched 写进 $GITHUB_OUTPUT——这是 Provision 编译器构建处置（set +e 捕获
-          # rc + workload same-flag-skip）的打通点，见本步豁免位注记与下方 provision 步的推演注记。
-          STAGE_BLOCK="$RUNNER_TEMP/infer-stage.out"
-          node "$SCRIPTS/infer-stage.mjs" --context context.json > "$STAGE_BLOCK"
-          # 从 [stage] 段的 compilerTouched 行抽布尔；infer-stage.main() 无条件打这一行
-          # （值为 JS 布尔 true/false），格式 `  compilerTouched: <bool>（...`。
-          COMPILER_TOUCHED=$(sed -n -E 's/^[[:space:]]*compilerTouched:[[:space:]]*(true|false).*/\1/p' "$STAGE_BLOCK")
-          # 抽不到 = 判定块格式破防（infer-stage 崩溃或输出面改了），按「判定管线故障宁红」
-          # 契约直接红，绝不静默当成 compilerTouched=false 放行（那会让编译器写集弄炸重新退化成
-          # Provision 先红 → INFRA → 重发复现的死循环，正是本打通要消除的对象）。
-          case "$COMPILER_TOUCHED" in
-            true|false) : ;;
-            *)
-              echo "::error::无法从 infer-stage 输出抽出 compilerTouched（got '${COMPILER_TOUCHED:-<empty>}'）—— 判定管线故障，宁红不假绿"
-              exit 1 ;;
-          esac
-          echo "compiler_touched=$COMPILER_TOUCHED" >> "$GITHUB_OUTPUT"
-          # —— 第二个 output：provision 豁免位（provision_exempt）——
-          # compilerTouched=true 只说明「本分支的编译器写集要有人裁决」，豁免（Provision 的
-          # compiler --build 失败不判红）成立的条件是**门禁轮的 plan 自己会重跑 compiler build**。
-          # ← 此处组合表是 src/tools/bbdev-plan.ts 的 compilerPrerequisite() 调用点的**镜像**：
-          #   唯一事实源是 plan 侧（CI 运行时读不了插件代码，故这里保留一份，plan 增删前置组合
-          #   必须同步本表；核对方式 = 看 bbdev-plan.ts 里 compilerPrerequisite() 的每个调用点）。
-          #   前置 config install → compiler build 的组合 = 无 phase 基线（workload/ / ball/ /
-          #   chip/ 三种 stage 都算，chip 基线与 skeleton 是恒定前置，另两者由 compilerTouched
-          #   决定）+ ball/c-bemu + ball/rtl + chip/skeleton + chip/slices + chip/integrate；
-          #   **唯一不前置的合法组合是 chip/bind**（该分支只走 modelCoverage(true)），而 bind 的
-          #   `workload --build --model` 实物上仍消费编译器产物
-          #   （$BB/bb-tests/workloads/CMakeLists.txt 把 BUDDY_BINARY_DIR 定为
-          #   $ENV{BUDDY_MLIR_BUILD_DIR}/bin 并从中取 buddy-opt / buddy-translate / buddy-llc）
-          #   ⇒ 若照旧豁免，那一轮就是拿热树里残留的旧编译器跑绿，分支弄坏的编译器无人裁决。
-          #   bind 因此不豁免：编译器构建失败在 Provision 真红（终态 commit status=error，可归因），
-          #   宁红不假绿。
-          # stage 取 [stage] 的 effective（prompt.ts 消费条 3），phase 取清单声明值
-          # （validate-manifest 同款 parseManifest）；任一取不到（清单非法、effective 无法判定）
-          # 都**不算**豁免——豁免需要「本轮会重跑 compiler build」的正面证据。
-          EFFECTIVE=$(sed -n -E 's/^[[:space:]]*effective:[[:space:]]*(workload|ball|chip)[[:space:]]*$/\1/p' "$STAGE_BLOCK")
-          MANIFEST_PHASE=$(node --input-type=module -e '
-            import { readFileSync } from "node:fs"
-            const { parseManifest } = await import(`file://${process.env.SCRIPTS}/manifest.mjs`)
-            const body = JSON.parse(readFileSync(`${process.env.GITHUB_WORKSPACE}/context.json`, "utf8")).body
-            process.stdout.write(parseManifest(body).phase ?? "")
-          ')
-          PROVISION_EXEMPT=false
-          if [ "$COMPILER_TOUCHED" = "true" ]; then
-            case "${EFFECTIVE:-none}/${MANIFEST_PHASE:-none}" in
-              workload/none|ball/none|chip/none|ball/c-bemu|ball/rtl|chip/skeleton|chip/slices|chip/integrate)
-                PROVISION_EXEMPT=true ;;
-            esac
-          fi
-          echo "provision_exempt=$PROVISION_EXEMPT" >> "$GITHUB_OUTPUT"
-          echo "verdict_inputs: compilerTouched=$COMPILER_TOUCHED effective=${EFFECTIVE:-<无法判定>} phase=${MANIFEST_PHASE:-<无>} → provision_exempt=$PROVISION_EXEMPT（\$GITHUB_OUTPUT；provision 步的编译器构建处置依据）"
-          # runner EDA 能力探测（complete 层 regression.yml EDA 车道的前置事实）：
-          # dc_shell/vcs/vivado 不在 nix env，属宿主机安装（上游 regression.yml 靠
-          # source 宿主 shell rc 引入）——这里探的是本 job 的实际 PATH，与 plan 工具
-          # 的探测口径一致（bbdev-plan.ts 复用 bbdev-common 的 findOnPath，同扫 PATH）。
-          probe_eda() { command -v "$1" >/dev/null 2>&1 && echo yes || echo no; }
-          EDA_CAP="dc_shell=$(probe_eda dc_shell) vcs=$(probe_eda vcs) vivado=$(probe_eda vivado)"
-          echo "verdict_inputs: runner EDA capability: $EDA_CAP"
-          {
-            # task-prompt 头：没有 PR —— 结论通道是 stdout 的 VERDICT 行 +
-            # $VERIFY_OUT/report.md（随 bb-verify-verdict artifact 上传）；禁止
-            # gh pr comment / gh pr review（没有可贴对象，空跑只是浪费轮次）。
-            echo "验证临时分支 $REF（head ${RESOLVED_SHA:0:8}）。验证层级：$LAYER（merge=门禁层 ≈ check.yaml；complete=重验证 ≈ check.yaml + regression.yml EDA 车道）。"
-            echo "runner EDA capability: $EDA_CAP（complete 层 EDA 车道的工具前置；dc/uvm/bebop-p2e 车道该跑而此处为 no → plan 会把该 lane 记进 blockedLanes，结论 INFRA 点名缺失工具）"
-            echo
-            echo "重要：本次验证没有 PR。禁止运行 gh pr comment / gh pr review。"
-            echo "最终结论必须同时落在两处："
-            echo "  1) 在 stdout 单独打印一行 VERDICT: PASS 或 VERDICT: FAIL（CI 门禁只认这一行）；"
-            echo "  2) 把完整 markdown 报告写入 $VERIFY_OUT/report.md。"
-            echo "分支上下文（title=commit subject，body=仓库根 bb-verify-task.md 或 commit body，files=与 origin/main 的 diff）如下："
-            cat context.json
-            echo
-            echo "===== CI 确定性判定（脚本注入，直接消费，不得重新判定）====="
-            cat "$STAGE_BLOCK"
-            node "$SCRIPTS/validate-manifest.mjs" --context context.json --repo-root "$BB_VERIFY_ROOT"
-            node "$SCRIPTS/binding-check.mjs" --context context.json --repo-root "$BB_VERIFY_ROOT"
-            node "$SCRIPTS/slices-verify.mjs" --context context.json
-            node "$SCRIPTS/probe-loop-check.mjs" --context context.json
-          } > task-prompt.md
+        run: bash .github/scripts/bb-verify/verdict-inputs.sh
 
-      # 每 run 的 provision 序列（与上游 .github/workflows/check.yaml 的 chip-check 顺序一致，
-      # 全部在持久化根内增量执行；nix build / config --install 热树耗时见 bootstrap 脚本头注）。
-      # 本步骤只是**热树预热**（真正的验证序列由会话侧 bbdev_plan 按判定块注入的 chip 生成），
-      # 但按清单 chip 预热才对那棵 chip 的构建树有用；清单没带 chip，或持久化根没有该 chip 的
-      # 实物目录，都**直接红**——退回 toy 只会把「清单与持久化根不一致」盖住，不兜底。
-      # 注意不放 `ls result/bin | head -3` 之类调试行 —— pipefail 下 head 提前关闭
-      # 管道会让 `ls` 以 EPIPE 退出造成假失败。
       - name: Provision persistent root (nix build + bbdev config/compiler/workload)
         env:
-          # P0 打通：compilerTouched 由前置的 Deterministic verdict inputs 步从 infer-stage 输出
-          # 抽出并写进 $GITHUB_OUTPUT（compiler_touched）。true = 本分支累计写集触及 ball/core 的
-          # compiler/**，编译器构建本身是门禁轮要裁决的内容，不是 CI 基建。
-          # 本步的豁免判定读 provision_exempt（同一层的第二个 output），不直接读 compiler_touched：
-          # 只有「本轮门禁 plan 自己会重跑 compiler build」时把编译器失败降级才有承载者，
-          # compilerTouched=true 而 plan 不含 compiler build 的那一支（chip/bind）不豁免。
           COMPILER_TOUCHED: ${{ steps.verdict_inputs.outputs.compiler_touched }}
           PROVISION_EXEMPT: ${{ steps.verdict_inputs.outputs.provision_exempt }}
-        run: |
-          set -euo pipefail
-          cd "$BB_VERIFY_ROOT"
-          export SCRIPTS="$HARNESS_PKG/scripts"
-          PROVISION_CHIP=$(node --input-type=module -e '
-            import { readFileSync, existsSync } from "node:fs"
-            const { parseManifest } = await import(`file://${process.env.SCRIPTS}/manifest.mjs`)
-            const body = JSON.parse(readFileSync(`${process.env.GITHUB_WORKSPACE}/context.json`, "utf8")).body
-            const chip = parseManifest(body).chip
-            // 预热只对清单声明的 chip 有意义：清单没带 chip（validate-manifest 会判 PRE-FAIL，
-            // 但那发生在判定块里，预热侧仍无 chip 可暖）或持久化根无该 chip 目录 → 直接红，
-            // 不退回 toy——用另一个 chip 暖树对门禁轮毫无用处，只会掩盖清单/持久化根不一致。
-            if (chip === undefined || !existsSync(`${process.env.BB_VERIFY_ROOT}/examples/chips/${chip}`)) {
-              console.error(`provision: 清单 chip 缺失或持久化根无该 chip（"${chip ?? "<无>"}"）—— 无法预热，宁红不假绿`)
-              process.exit(1)
-            }
-            process.stdout.write(chip)
-          ')
-          echo "provision chip=${PROVISION_CHIP}（仅热树预热；验证序列的 chip 以判定块注入值为准）"
-          echo "compilerTouched=${COMPILER_TOUCHED:-<unset>} provisionExempt=${PROVISION_EXEMPT:-<unset>}" \
-               "（verdict_inputs 步的两个输出；决定编译器构建失败是否降级为门禁轮裁决的是 provision_exempt，" \
-               "它比 compilerTouched 多一个条件：本轮门禁 plan 自己会重跑 compiler build）"
-          echo "::group::nix build"; time nix build; echo "::endgroup::"
-          echo "::group::bbdev config --install"
-          time nix develop -c bbdev config --install
-          echo "::endgroup::"
-          # —— 编译器构建处置（P0 反 INFRA 死循环）——
-          # 推演：编译器写集被本分支弄炸时，若照旧让 compiler --build 的非零退出直接判红整步，
-          #   就变成「Provision 先红 → 终态 INFRA → 消费方重发 dispatch → 门禁轮又撞到
-          #   同一个编译器错」的死循环——可编译器构建本就是门禁轮要裁决的**验证内容**，不是基建。
-          # 因此只在 provision_exempt=true 时把编译器构建失败降级：用 set +e 捕获 rc、本步保持绿、
-          #   末尾 echo 明确注记交门禁轮裁决（注记进 Actions 日志，可见）。
-          #   豁免位的构成（compilerTouched ∧ 本轮 plan 含 compiler build）与 bind 空洞的推演
-          #   写在 verdict_inputs 步的注记里，那里是唯一判定处；本步只消费，不再自己判 phase。
-          # 为什么不用步级 continue-on-error: true：continue-on-error 是整步属性，若在
-          #   豁免时置真，会连 nix build / config --install 的真基建失败一起吞掉
-          #   （它们与编译器写集无关，必须真红）；且 run 块首行 set -euo pipefail，构建一 non-zero
-          #   就中断，continue-on-error 只会让「已中断的步」显示为忽略错，末尾注记根本跑不到。
-          #   故沿用 Run verify-runner 步骤的 set +e / rc=$? / set -e 捕获范式，做到「本步仍绿、
-          #   注记必达、且只豁免编译器这一条命令」。
-          COMPILER_RC=0
-          if [ "${PROVISION_EXEMPT:-false}" = "true" ]; then
-            echo "::group::bbdev compiler --build (incremental；provision_exempt=true → 失败交门禁轮裁决)"
-            set +e
-            time nix develop -c bbdev compiler --build "--chip ${PROVISION_CHIP}"
-            COMPILER_RC=$?
-            set -e
-            if [ "$COMPILER_RC" -ne 0 ]; then
-              echo "编译器构建失败交由门禁轮裁决（provision_exempt=true：本分支触及 ball/core 的" \
-                   "compiler/**，且本轮 plan 会自行前置 config install → compiler build，编译器构建" \
-                   "是门禁轮要裁决的验证内容而非 CI 基建；exit=${COMPILER_RC}）。"
-            fi
-            echo "::endgroup::"
-          else
-            echo "::group::bbdev compiler --build (incremental；provision_exempt=false → 失败真红)"
-            time nix develop -c bbdev compiler --build "--chip ${PROVISION_CHIP}"
-            echo "::endgroup::"
-          fi
-          # —— workload 处置（same-flag-skip，只豁免不降级）——
-          # 推演：workload clean/build 依赖编译器产物。compiler 炸了 workload 必炸（同一错，
-          #   重跑只会把门禁轮已接手的裁决再预演一遍并可能报红），但 workload 炸了不代表 compiler
-          #   炸——所以只有「本轮豁免生效（provision_exempt=true）且编译器确实构建失败」时才
-          #   same-flag-skip workload；compiler 成功（无论 exempt 与否）或 exempt=false 时 workload
-          #   照旧跑且其非零退出真红（裸命令在 set -e 下），因为那不再是编译器写集问题的连带。
-          echo "::group::bbdev workload --clean + --build (incremental)"
-          if [ "$COMPILER_RC" -ne 0 ]; then
-            echo "workload --clean/--build skipped（same-flag-skip）：编译器构建本轮已失败并交由门禁轮" \
-                 "裁决，workload 构建依赖编译器产物，继续跑必然撞同一个编译器错、且会把门禁轮的裁决面" \
-                 "提前预演成 Provision 红——跳过以保持「编译器问题只在门禁轮裁一次」的单一通道。"
-          else
-            time nix develop -c bbdev workload --clean "--chip ${PROVISION_CHIP}"
-            time nix develop -c bbdev workload --build "--chip ${PROVISION_CHIP}"
-          fi
-          echo "::endgroup::"
+        run: bash .github/scripts/bb-verify/provision.sh
 
-      - name: Stage dsh-plugin from the local checkout and build verify-runner
-        run: |
-          set -euo pipefail
-          DSH_PLUGIN_DIR="$RUNNER_TEMP/dsh-plugin"
-          mkdir -p "$DSH_PLUGIN_DIR"
-          # 从本机检出复制（cp 会带上未提交的新文件，这正是验证物料所需要的）；
-          # node_modules/lib 一并重装重建，CI 验证的是干净构建。
-          cp -a "$HARNESS_PKG" "$DSH_PLUGIN_DIR/verify-runner"
-          rm -rf "$DSH_PLUGIN_DIR/verify-runner/node_modules" "$DSH_PLUGIN_DIR/verify-runner/lib"
-          cd "$DSH_PLUGIN_DIR/verify-runner"
-          pnpm install
-          pnpm build
-          echo "DSH_PLUGIN_DIR=$DSH_PLUGIN_DIR" >> "$GITHUB_ENV"
-
-      - name: Prepare a fresh DSH_HOME with the LLM provider settings
-        run: |
-          set -euo pipefail
-          DSH_LOCAL="$RUNNER_TEMP/dsh-home"
-          mkdir -p "$DSH_LOCAL"
-          # Phase 0 教训：CI 的 DSH_HOME 是全新的，没有这份 settings.yaml LLM 解析
-          # 起不来。文件不含 key，key 只经 DEEPSEEK_API_KEY 环境变量注入。
-          cp "$DSH_PLUGIN_DIR/verify-runner/ci/settings.ci.yaml" "$DSH_LOCAL/settings.yaml"
-          echo "DSH_HOME=$DSH_LOCAL" >> "$GITHUB_ENV"
-
-      - name: Install dsh plugins (headless profile)
-        run: |
-          cd "$DSH_DIR"
-          pnpm dsh plugin --profile headless add "$DSH_PLUGIN_DIR/verify-runner"
-
-      - name: Write plugin config (repoPath = the persistent buckyball root)
+      - name: Set up dsh (stage plugin, fresh DSH_HOME, headless profile, config)
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }} # 只写进 fresh DSH_HOME 的 cordis.patch.yml，绝不回显
-        run: |
-          mkdir -p "$DSH_HOME/profiles/headless"
-          # repoPath 指向持久化根（已 prepare 到 ref head 并完成 provision）——
-          # verify-runner 的 bbdev 三件套都以它为 cwd 解析（nix develop -c bbdev）。
-          # tool-workload-integration 行是 config-only 凭证通道的预接线：插件只读
-          # config 的 hfToken（不再读 HF_TOKEN env），token 经本步 env 从 secret 写入；
-          # 该插件当前未在 CI stage（verify-runner 会话全程 HF_HUB_OFFLINE=1 + 预置缓存），
-          # loader 对未安装插件的 patch 行仅 warn 不 fail，此行在插件进 CI 时即生效。
-          # hfEndpoint 用默认 https://huggingface.co，无需显式写。
-          cat > "$DSH_HOME/profiles/headless/cordis.patch.yml" <<EOF
-          - id: tool-verify-runner
-            config:
-              repoPath: $BB_VERIFY_ROOT
-              taskDir:  $RUNNER_TEMP/verify-tasks
-          - id: tool-workload-integration
-            config:
-              repoPath: $BB_VERIFY_ROOT
-              hfToken: "$HF_TOKEN"
-          EOF
+          HF_TOKEN: ${{ secrets.HF_TOKEN }} # written into the fresh DSH_HOME only, never echoed
+        run: bash .github/scripts/bb-verify/setup-dsh.sh
 
-      # 只读门禁基线：会话前的 tracked diff 快照。git diff 只覆盖 tracked 内容；
-      # 子模块工作树的既有构建残留由基线吸收，会话期间的新增改动必现形。
       - name: Snapshot persistent-root diff (read-only gate baseline)
         run: git -C "$BB_VERIFY_ROOT" diff HEAD > "$RUNNER_TEMP/pre-verify.diff"
 
-      # verdict→退出码一致性：dsh headless 的进程退出码只反映会话是否正常完成
-      # （completed → 0），不反映 PASS/FAIL（src/prompt.ts 约定）；结论由最终回答的
-      # VERDICT 行表达。故先让会话完整跑完，再对捕获的 stdout 解析 VERDICT 裁决本步骤
-      # 退出码并写 verdict.txt（Post terminal commit status 步的唯一事实源）：
-      #   首个 ^VERDICT: (PASS|FAIL) 行 → PASS 且会话 exit 0 → verdict.txt=PASS，本步骤
-      #     exit 0（job 绿）；
-      #   VERDICT: FAIL → verdict.txt=FAIL，exit 1（job 红）；
-      #   解析不到 → verdict.txt=INFRA，exit 1（宁红不假绿）。stdout 是结论的唯一来源，
-      #   没有任何其他面可回退查询。
       - name: Run verify-runner
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }} # deepseek 原生 / deepseek-v4-flash
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERIFY_STDOUT: ${{ runner.temp }}/verify-stdout.log
-          VERIFY_STDERR: ${{ runner.temp }}/verify-stderr.log
-        run: |
-          cd "$DSH_DIR"
-          # 2026-09-06：HF 网络路径在 CI 必死——harness http-proxy policy
-          # （packages/util/http-proxy/src/policy.ts:321 withLoopback）给下游子进程
-          # 重写 no_proxy 并追加带方括号的 `[::1]`，httpx 0.28.1 解析它即崩
-          # （InvalidURL: Invalid port ':1]'；run 33989403205/33989896357/33990723390
-          # 三轮实证 + verifier 逐项 bisect；步骤级 export 治标无效——harness 会重写）。
-          # CI 模型缓存一律预置（~/.cache/huggingface），故直接全程离线：huggingface_hub
-          # 离线模式在构造 HTTP 客户端之前短路，坏 no_proxy 根本不会被解析。
-          # 后果语义：模型未预置时报 OfflineModeIsEnabled（确定性失败），不会走网络。
-          export HF_HUB_OFFLINE=1
-          set +e
-          pnpm dsh --profile headless "$(cat "$GITHUB_WORKSPACE/task-prompt.md")" \
-            > "$VERIFY_STDOUT" 2> "$VERIFY_STDERR"
-          DSH_RC=$?
-          set -euo pipefail
-          # verdict 先解析一次（供呈现与门禁共用），再包装输出、写 summary、进 case 裁决。
-          LINE=$(grep -m1 -E '^VERDICT:[[:space:]]*(PASS|FAIL)' "$VERIFY_STDOUT" || true)
-          VERDICT=$(printf '%s\n' "$LINE" | sed -n -E 's/^VERDICT:[[:space:]]*(PASS|FAIL).*/\1/p')
-          # per-lane/per-section 可读性（2026-09-06 加固）：把会话 stdout/stderr 折进可折叠
-          # ::group::，并写一份 lane summary（$GITHUB_STEP_SUMMARY）。verdict-gate 读的是
-          # $VERIFY_STDOUT 文件本身，不受这里的呈现包装影响。
-          # 转义（2026-09-07）：会话输出会原样进 Actions 日志，而行首的 "::name::" 会被 runner
-          # 解析成 workflow 注解（timestamp 前缀会被日志处理器剥掉后再匹配）——会话报告里引用
-          # 被验证方散文 / 工具输出，等于给对方内容一个伪造 ::error::、::group::、甚至
-          # ::stop-commands::<token>:: 拆掉整段日志的通道。mask_wf 把行首的命令形（含带参数
-          # 的 `::error file=x::`）改写成 `[name] `：语义不变、注解面失效。只影响呈现，
-          # verdict-gate 读的仍是未加工的 $VERIFY_STDOUT 文件。
-          mask_wf() { sed -E 's/^::([a-zA-Z][a-zA-Z0-9-]*)([[:space:]][^:]*)?::/[\1] /'; }
-          echo "::group::verify-runner session stdout"
-          mask_wf < "$VERIFY_STDOUT"
-          echo "::endgroup::"
-          echo "::group::verify-runner session stderr"
-          mask_wf < "$VERIFY_STDERR" >&2
-          echo "::endgroup::"
-          # step summary 是 markdown：LINE 里的反引号会拆掉本行的 inline code、`|` 会拆表格，
-          # 判定块片段里的 ``` 会提前闭合代码栅栏（→ 后续内容按 markdown 渲染）。呈现前先剥。
-          LINE_SAFE=$(printf '%s' "${LINE:-<none>}" | tr -d '`\r' | tr '|' '/' | cut -c1-120)
-          {
-            echo "### bb-verify — ref $REF · ${RESOLVED_SHA:0:8} · layer=$LAYER"
-            echo ""
-            echo "| 项 | 值 |"
-            echo "| --- | --- |"
-            echo "| dsh session exit | \`$DSH_RC\` |"
-            # 判定块（task-prompt.md 尾部）里的 lane 相关行：stage / chip / phase + 本轮
-            # verdict，按 lane 语义分组呈现，供人一眼看清这次验证跑的是哪一层哪些 lane。
-            echo "| 本轮 VERDICT (stdout) | \`$LINE_SAFE\` |"
-            echo ""
-            echo "#### 注入判定块（lane 依据）"
-            echo '```'
-            # 注：skippedLanes 分支已删（2026-09-07）——它是 bbdev_plan 的**运行时**返回值，
-            # 只出现在会话输出/报告里，五个判定脚本没有一个把它写进 task-prompt.md，
-            # grep 永远打不中（死分支）。lane 裁剪的呈现归会话报告，不归这里。
-            grep -aE '^\[|effective|chip|phase|layer|PRE-FAIL|VERDICT' \
-              "$GITHUB_WORKSPACE/task-prompt.md" 2>/dev/null | head -60 \
-              | tr -d '\r' | sed -E 's/^ *```.*$//'
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY" || true
-          # ==== verdict-gate BEGIN（唯一裁决点，fail-fast）====
-          echo "verdict-gate: parsed VERDICT=${VERDICT:-<none>}, dsh session exit=${DSH_RC}"
-          case "$VERDICT" in
-            PASS)
-              if [ "$DSH_RC" -ne 0 ]; then
-                # PASS 但会话异常退出 = 会话不可信：不写 verdict.txt，exit 1 后由
-                # Finalize verdict files 步落 INFRA（终态 status=error）。
-                echo "::error::VERDICT says PASS but dsh session exited ${DSH_RC} -- failing (no fake green)"
-                exit 1
-              fi
-              printf 'VERDICT: PASS\n' > "$VERIFY_OUT/verdict.txt"
-              echo "verdict-gate: PASS -- job green"
-              ;;
-            FAIL)
-              printf 'VERDICT: FAIL\n' > "$VERIFY_OUT/verdict.txt"
-              echo "::error::VERDICT: FAIL -- verification failed (see report.md in the bb-verify-verdict artifact)"
-              exit 1
-              ;;
-            *)
-              printf 'VERDICT: INFRA\n' > "$VERIFY_OUT/verdict.txt"
-              echo "::error::no 'VERDICT: PASS|FAIL' line in headless output -- treated as INFRA (no fake green)"
-              exit 1
-              ;;
-          esac
-          # ==== verdict-gate END ====
+        run: bash .github/scripts/bb-verify/run-verify.sh
 
-      # 结论产物门禁（绿路径上的最后一道判官）：verdict.txt 必须存在且解析出
-      # VERDICT: PASS|FAIL|INFRA（Run verify-runner 的 verdict-gate 各分支已写入；
-      # 绿路径上它必为 PASS——FAIL/INFRA 路径 job 已红，本步跑不到；这里把守的是
-      # 「文件丢失/写坏」假绿通道），且 $VERIFY_OUT/report.md 必须真实存在且非空——
-      # 不补占位：会话没写报告就是没完成契约，判 INFRA（改写 verdict.txt 让终态
-      # status=error），job 红。
-      - name: 'Gate: verdict artifacts complete (verdict.txt parses + report.md non-empty)'
-        run: |
-          set -euo pipefail
-          V=$(sed -n -E 's/^VERDICT:[[:space:]]*(PASS|FAIL|INFRA)[[:space:]]*$/\1/p' "$VERIFY_OUT/verdict.txt" 2>/dev/null | head -1)
-          if [ -z "$V" ]; then
-            printf 'VERDICT: INFRA\n' > "$VERIFY_OUT/verdict.txt"
-            echo "::error::verdict-gate: $VERIFY_OUT/verdict.txt missing or unparseable -- INFRA (no fake green)"
-            exit 1
-          fi
-          if [ ! -s "$VERIFY_OUT/report.md" ]; then
-            printf 'VERDICT: INFRA\n' > "$VERIFY_OUT/verdict.txt"
-            echo "::error::verdict-gate: $VERIFY_OUT/report.md missing or empty -- session failed its report contract -- INFRA (no fake green)"
-            exit 1
-          fi
-          echo "verdict-gate: verdict.txt=$V, report.md present ($(wc -c < "$VERIFY_OUT/report.md") bytes)"
-
-      # 只读门禁：验证会话对持久化根只读 —— 会话前后的 tracked diff 逐字节比对
-      # （基线见 Snapshot 步骤；子模块既有残留不进入差集）。
-      - name: 'Gate: persistent root untouched by the session'
-        run: |
-          set -euo pipefail
-          git -C "$BB_VERIFY_ROOT" diff HEAD > "$RUNNER_TEMP/post-verify.diff"
-          if ! cmp -s "$RUNNER_TEMP/pre-verify.diff" "$RUNNER_TEMP/post-verify.diff"; then
-            echo "::error::persistent root tracked diff changed during the session (verifier must be read-only)"
-            diff "$RUNNER_TEMP/pre-verify.diff" "$RUNNER_TEMP/post-verify.diff" | head -50 || true
-            exit 1
-          fi
-          echo "readonly-gate: persistent root diff unchanged"
+      - name: 'Gate: verdict artifacts complete + persistent root untouched'
+        run: bash .github/scripts/bb-verify/final-gates.sh
 
       - name: Archive session logs
         if: always()
-        # observability only - flaky artifact-upload resets must not flip
-        # the verdict-gate semantics of a red job
-        continue-on-error: true
+        continue-on-error: true # observability only; upload flakiness must not flip a red job's verdict semantics
         uses: actions/upload-artifact@v4
         with:
           name: dsh-sessions
           path: ${{ runner.temp }}/dsh-home/sessions
 
-      # verdict.txt 兜底（always()）：更早的步就红、Run verify-runner 的 verdict-gate
-      # 没来得及写时，保证 verdict.txt 存在且为 INFRA —— Post terminal commit status
-      # 步的唯一事实源是 verdict.txt。不补 report.md 占位（fail-fast：会话没写报告就是
-      # 没完成契约，artifact 里缺 report.md 如实反映；上传带 if-no-files-found: warn）。
-      # continue-on-error 是有意的：这是报告通道的兜底准备，不得翻转 job 结论。
+      # Backstop for earlier red steps that never reached run-verify's verdict
+      # gate: guarantee verdict.txt exists (INFRA) — the terminal status step's
+      # sole source of truth.
       - name: Finalize verdict files
         if: always()
         continue-on-error: true
@@ -735,58 +143,27 @@ jobs:
           mkdir -p "$VERIFY_OUT"
           [ -f "$VERIFY_OUT/verdict.txt" ] || printf 'VERDICT: INFRA\n' > "$VERIFY_OUT/verdict.txt"
 
-      # bb-verify-verdict artifact：verdict.txt（单行结论，verdict-gate 的解析源）+
-      # report.md（会话写的完整 markdown 报告；INFRA 路径上可能缺失，如实反映）。
       - name: Archive verdict artifact
         if: always()
-        # 与 dsh-sessions 同理：artifact 上传的抖动不得翻转 verdict-gate 语义
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: bb-verify-verdict
-          # YAML 层无法引用 env —— 下面两个路径必须与 workflow 级 env 的 VERIFY_OUT
-          # 逐字节相等（改 VERIFY_OUT 时必须同步这里）。
+          # Must byte-equal VERIFY_OUT (YAML cannot reference env here).
           path: |
             /home/ROXY/code/deepseek-harness/.bb-verify-out/verdict.txt
             /home/ROXY/code/deepseek-harness/.bb-verify-out/report.md
           if-no-files-found: warn
 
-      # commit status 握手②（always()）：终态的唯一事实源是 verdict.txt ——
-      # PASS→success / FAIL→failure / 其余（INFRA、文件缺失=更早的步就红、verdict-gate
-      # 没来得及写）→error。failure() 路径（基建红、无结论红）也由本步覆盖。
-      # continue-on-error 是有意的：status 上报是报告通道，上报失败不再翻转 job 结论；
-      # runner 整机死/本步没跑到的场景由 hosted report 作业兜底 error。
       - name: Post terminal commit status
         if: always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set +e
-          if [ -z "${RESOLVED_SHA:-}" ]; then
-            echo "post-status: RESOLVED_SHA unknown (prepare never completed) -- standing down (hosted report job covers)"
-            exit 0
-          fi
-          V=$(sed -n -E 's/^VERDICT:[[:space:]]*(PASS|FAIL|INFRA).*/\1/p' "$VERIFY_OUT/verdict.txt" 2>/dev/null | head -1)
-          case "$V" in
-            PASS) STATE=success ;;
-            FAIL) STATE=failure ;;
-            *) STATE=error; V="${V:-INFRA}" ;;
-          esac
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$RESOLVED_SHA" \
-            -f context=bb-verify -f state="$STATE" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            -f description="bb-verify: ${V} (ref ${REF}, layer ${LAYER})" \
-            && echo "post-status: $STATE ($V) on ${RESOLVED_SHA:0:8}" \
-            || echo "post-status: gh api failed (best-effort; hosted report job covers)"
+        run: bash .github/scripts/bb-verify/post-status.sh
 
-  # report —— hosted 兜底作业（GitHub 托管 runner，公共 fork 免费，实证见 run
-  #   33262256989；needs: verify + if: always()）。只覆盖一个场景：runner 整机
-  #   已死（OOM/掉线）导致 verify 作业的 Post terminal commit status 步根本没跑到、
-  #   目标 sha 上没有 bb-verify 终态（success|failure|error）→ 补 state=error。
-  #   已有终态（机内步是唯一权威终态作者）或探测失败（API 抖动/限流）都站开 ——
-  #   fail-closed，绝不覆盖机内结论。不占本机 runner slot、不碰持久根，只读写
-  #   commit status API。
+  # Hosted backstop: covers exactly one case — the runner died before posting a
+  # terminal bb-verify status. Never overwrites an existing terminal state.
   report:
     runs-on: ubuntu-latest
     needs: verify
@@ -795,39 +172,14 @@ jobs:
     permissions:
       contents: read
       actions: read
-      statuses: write # 兜底 state=error（verify 没留下 bb-verify 终态时）
+      statuses: write
     steps:
-      - name: 'Backstop: post error commit status if bb-verify terminal status is missing'
+      - uses: actions/checkout@v4
+      - name: Post error status if the bb-verify terminal status is missing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERIFY_STATUS: ${{ needs.verify.result }}
           JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA_INPUT: ${{ inputs.sha }}
           VERIFY_RESOLVED_SHA: ${{ needs.verify.outputs.resolved_sha }}
-        run: |
-          set +e
-          # 兜底对象 sha = verify 作业实测的 HEAD（prepare 的 resolved_sha 输出）；
-          # prepare 没跑到时退回 sha 输入；两者皆空 = 连目标都不明，站开。
-          SHA="$VERIFY_RESOLVED_SHA"; [ -n "$SHA" ] || SHA="$SHA_INPUT"
-          if [ -z "$SHA" ]; then
-            echo "report: sha unknown (prepare never resolved, no sha input) -- standing down"
-            exit 0
-          fi
-          # 已有终态 → 站开不抢（机内步是唯一权威终态作者）；探测失败同样 fail-closed。
-          if ! EXISTING=$(gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
-            --jq '[.[] | select(.context=="bb-verify")] | .[0].state // empty' 2>/dev/null); then
-            echo "report: status probe failed (API failure) -- standing down (fail-closed)"
-            exit 0
-          fi
-          case "$EXISTING" in
-            success|failure|error)
-              echo "report: terminal status '$EXISTING' already on ${SHA:0:8} -- standing down"
-              exit 0 ;;
-          esac
-          # 只剩 pending / 无状态两种可能：verify 终态但没给出结论 = 基建面异常。
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
-            -f context=bb-verify -f state=error \
-            -f target_url="$JOB_URL" \
-            -f description="bb-verify: no terminal status (verify job conclusion=$VERIFY_STATUS; runner may have died) -- re-dispatch" \
-            && echo "report: posted backstop state=error on ${SHA:0:8}" \
-            || echo "report: post failed (best-effort)"
+        run: bash .github/scripts/bb-verify/backstop.sh
