@@ -24,6 +24,9 @@ echo "DSH_PLUGIN_DIR=$DSH_PLUGIN_DIR" >> "$GITHUB_ENV"
 DSH_LOCAL="$RUNNER_TEMP/dsh-home"
 mkdir -p "$DSH_LOCAL"
 cp "$DSH_PLUGIN_DIR/verify-runner/ci/settings.ci.yaml" "$DSH_LOCAL/settings.yaml"
+# GITHUB_ENV only applies to LATER steps; this script's own config write below
+# still needs the variable in-process.
+export DSH_HOME="$DSH_LOCAL"
 echo "DSH_HOME=$DSH_LOCAL" >> "$GITHUB_ENV"
 
 cd "$DSH_DIR"
