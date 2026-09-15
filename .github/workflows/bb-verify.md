@@ -55,7 +55,7 @@ compared byte-for-byte before/after).
 ## Deployment
 
 All machine-specific values live in the workflow's top-level `env` block:
-adjust those 6 variables, the `runs-on` label and the PATH-fix lines to your
+adjust those 10 variables, the `runs-on` label and the PATH-fix lines to your
 host — nothing else.
 
 - `BB_VERIFY_ROOT` — persistent checkout, built once by
@@ -67,6 +67,13 @@ host — nothing else.
   and stays versioned with the plugin.
 - `VERIFY_OUT` — verdict directory, writable from the dsh session sandbox.
 - `RELAY_ADDR` — optional `host:port` of a local LLM relay; empty = direct.
+- `SNPSLMD_LICENSE_FILE` / `LM_LICENSE_FILE` — Synopsys license server for
+  dc_shell/vcs/lc_shell (regression.yml pattern).
+- `EDA_BIN` — dir with dc_shell/vcs wrappers (legacy-lib shims), prepended to
+  PATH; empty = tools natively on PATH.
+- `EDA_SESSION_BINDS` — `;`-separated `src>dst` bind pairs for the session
+  sandbox (bwrap) materializing `/home/bb-runner/Code/eda`; empty = the host
+  has that tree natively, no sandbox.
 - Secrets: `DEEPSEEK_API_KEY` (required), `HF_TOKEN` (optional, model cache).
 
 Runner host needs nix, gh, node, pnpm on PATH, the bootstrapped persistent

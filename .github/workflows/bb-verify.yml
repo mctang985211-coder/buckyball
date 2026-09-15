@@ -10,7 +10,7 @@ permissions:
   statuses: write
 
 # ===== Deployment facts (the only machine-specific section) =====
-# Adjust these 6 values, runs-on and the PATH-fix lines to your runner host;
+# Adjust these 10 values, runs-on and the PATH-fix lines to your runner host;
 # run blocks reference $VARNAME only. Sole exception: the "Archive verdict
 # artifact" path: strings (YAML cannot reference env) must byte-equal VERIFY_OUT.
 env:
@@ -20,6 +20,14 @@ env:
   HARNESS_PKG: /home/ROXY/code/bb_work/harness/packages/verify-runner    # local verify-runner checkout (scripts/*.mjs run straight from it)
   VERIFY_OUT: /home/ROXY/code/deepseek-harness/.bb-verify-out            # verdict dir (verdict.txt + report.md); must be writable from the dsh sandbox
   RELAY_ADDR: 127.0.0.1:8788                                             # optional host:port of a local LLM relay; empty = direct connection
+  SNPSLMD_LICENSE_FILE: 26000@127.0.0.1                                  # Synopsys license server for dc_shell/vcs/lc_shell (regression.yml pattern)
+  LM_LICENSE_FILE: 26000@127.0.0.1                                       # ditto; the fallback Synopsys licensing actually reads
+  EDA_BIN: /home/ROXY/bb-verify/eda-env/bin                              # dir with dc_shell/vcs wrappers (legacy-lib shims); empty = tools natively on PATH
+  # `;`-separated src>dst bind pairs for the session sandbox: materializes the
+  # /home/bb-runner/Code/eda tree + lc_shell wrapper + lc's libstdc++ swap + a
+  # files-only nsswitch.conf (the systemd NSS module SEGVs this lc_shell).
+  # Empty = no sandbox (the upstream runner has these paths natively).
+  EDA_SESSION_BINDS: '/data2/smic180>/home/bb-runner/Code/eda/D_libraries/SMIC180;/data2/tools/syn/R-2020.09-SP5>/home/bb-runner/Code/eda/A_packages/tools/syn/R-2020.09-SP5;/home/ROXY/bb-verify/eda-env/bin/lc_shell>/home/bb-runner/Code/eda/A_packages/tools/lc/R-2020.09-SP5/bin/lc_shell;/lib/x86_64-linux-gnu/libstdc++.so.6>/data2/tools/lc/R-2020.09-SP5/linux64/lc/shlib/libstdc++.so.6;/home/ROXY/bb-verify/eda-env/etc/nsswitch.conf>/etc/nsswitch.conf'
 
 on:
   workflow_dispatch:
@@ -49,7 +57,9 @@ concurrency:
 jobs:
   verify:
     runs-on: cpu-server
-    timeout-minutes: 180
+    # complete layer + EDA lanes (SRAM .lib->.db compile, dc synthesis, UVM)
+    # can exceed 3h on this host.
+    timeout-minutes: 360
     outputs:
       resolved_sha: ${{ steps.prepare.outputs.resolved_sha }}
     steps:
@@ -64,6 +74,7 @@ jobs:
         run: |
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
           echo "/home/ROXY/.local/bin"             >> "$GITHUB_PATH"
+          [ -z "$EDA_BIN" ] || echo "$EDA_BIN"     >> "$GITHUB_PATH"
 
       - name: Validate ref inputs
         env:
