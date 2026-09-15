@@ -19,7 +19,7 @@ env:
   DSH_DIR: /home/ROXY/code/deepseek-harness                              # local dsh checkout (pnpm dsh)
   HARNESS_PKG: /home/ROXY/code/bb_work/harness/packages/verify-runner    # local verify-runner checkout (scripts/*.mjs run straight from it)
   VERIFY_OUT: /home/ROXY/code/deepseek-harness/.bb-verify-out            # verdict dir (verdict.txt + report.md); must be writable from the dsh sandbox
-  RELAY_ADDR: 127.0.0.1:8788                                             # optional host:port of a local LLM relay; empty = direct connection
+  RELAY_ADDR: ''                                                         # optional host:port of a local LLM relay; empty = direct connection (tokenrhythm needs none)
   SNPSLMD_LICENSE_FILE: 26000@127.0.0.1                                  # Synopsys license server for dc_shell/vcs/lc_shell (regression.yml pattern)
   LM_LICENSE_FILE: 26000@127.0.0.1                                       # ditto; the fallback Synopsys licensing actually reads
   EDA_BIN: /home/ROXY/bb-verify/eda-env/bin                              # dir with dc_shell/vcs wrappers (legacy-lib shims); empty = tools natively on PATH
