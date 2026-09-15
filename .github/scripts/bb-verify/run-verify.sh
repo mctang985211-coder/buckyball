@@ -28,8 +28,31 @@ cd "$DSH_DIR"
 # with OfflineModeIsEnabled instead of wandering onto the network.
 export HF_HUB_OFFLINE=1
 
+# EDA session sandbox: empty EDA_SESSION_BINDS = run unsandboxed (the upstream
+# runner has /home/bb-runner/Code/eda natively). The fork deployment
+# materializes that tree + the lc_shell wrapper + lc's libstdc++ swap + a
+# files-only nsswitch.conf (libnss_systemd SEGVs the R-2020.09 lc_shell under
+# bwrap; files-only NSS removes that module from the lookup chain).
+SANDBOX=()
+if [ -n "${EDA_SESSION_BINDS:-}" ]; then
+  SANDBOX=(bwrap --dev-bind / / --tmpfs /home --bind "$HOME" "$HOME")
+  IFS=';' read -ra BIND_PAIRS <<< "$EDA_SESSION_BINDS"
+  for pair in "${BIND_PAIRS[@]}"; do
+    [ -n "$pair" ] || continue
+    src=${pair%%>*}
+    dst=${pair#*>}
+    SANDBOX+=(--dir "$(dirname "$dst")")
+    if [ -f "$src" ]; then
+      SANDBOX+=(--ro-bind "$src" "$dst")
+    else
+      SANDBOX+=(--bind "$src" "$dst")
+    fi
+  done
+  SANDBOX+=(--)
+fi
+
 set +e
-pnpm dsh --profile headless "$(cat "$GITHUB_WORKSPACE/task-prompt.md")" \
+"${SANDBOX[@]}" pnpm dsh --profile headless "$(cat "$GITHUB_WORKSPACE/task-prompt.md")" \
   > "$VERIFY_STDOUT" 2> "$VERIFY_STDERR"
 DSH_RC=$?
 set -e
