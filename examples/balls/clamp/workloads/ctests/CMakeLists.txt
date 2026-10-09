@@ -1,0 +1,13 @@
+add_buckyball_ctests(
+  clamp_test.c
+  clamp_capacity_test.c
+  clamp_invalid_lo_gt_hi.c
+  clamp_invalid_zero_n.c
+  clamp_invalid_misaligned_n.c
+  clamp_invalid_over_capacity.c
+  clamp_invalid_bank_range.c
+  clamp_invalid_unallocated.c
+  clamp_invalid_multigroup.c
+  clamp_invalid_alias.c
+  clamp_invalid_reserved.c
+)

@@ -1,0 +1,8 @@
+# Intentional exclusions from all-expected-PASS lists; retain source/build targets.
+[[exclude]]
+stem = "legacy_clamp_v1-pebble-ctest-matadd_after_smatmul_os_test-baremetal"
+reason = "fixed M=208/CL=416 exceeds 64 bank rows"
+
+[[exclude]]
+stem = "legacy_clamp_v1-pebble-mlirtest-bank_matadd_bank_1024x8_i32-baremetal"
+reason = "hard-coded 1024 rows exceeds Pebble bank entries=64"

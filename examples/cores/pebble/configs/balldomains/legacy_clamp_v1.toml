@@ -1,0 +1,26 @@
+# Independent legacy experiment: preserve existing instruction meanings.
+ballNum = 8
+
+ballIdMappings = [
+  { ballId = 0, ballName = "TransposeBall", ballClass = "examples.balls.transpose.TransposeBall", config = "../../../../balls/transpose/configs/default.toml", inBW = 1, outBW = 1 },
+  { ballId = 1, ballName = "SMatMulBall", ballClass = "examples.balls.smatmul.SMatMulBall", config = "../../../../balls/smatmul/configs/lane16.toml", inBW = 2, outBW = 1 },
+  { ballId = 2, ballName = "Im2colBall", ballClass = "examples.balls.im2col.Im2colBall", config = "../../../../balls/im2col/configs/default.toml", inBW = 1, outBW = 1 },
+  { ballId = 3, ballName = "ToInt8Ball", ballClass = "examples.balls.toint8.ToInt8Ball", config = "../../../../balls/toint8/configs/default.toml", inBW = 1, outBW = 1 },
+  { ballId = 4, ballName = "Int2FpBall", ballClass = "examples.balls.int2fp.Int2FpBall", config = "../../../../balls/int2fp/configs/default.toml", inBW = 2, outBW = 1 },
+  { ballId = 5, ballName = "MatAddBall", ballClass = "examples.balls.matadd.MatAddBall", config = "../../../../balls/matadd/configs/default.toml", inBW = 2, outBW = 1 },
+  { ballId = 6, ballName = "TraceBall", ballClass = "examples.balls.trace.TraceBall", config = "../../../../balls/trace/configs/default.toml", inBW = 1, outBW = 1 },
+  { ballId = 7, ballName = "ClampBall", ballClass = "examples.balls.clamp.ClampBall", config = "../../../../balls/clamp/configs/default.toml", inBW = 1, outBW = 1 }
+]
+
+ballISA = [
+  { mnemonic = "TRANSPOSE", funct7 = 49, bid = 0 },
+  { mnemonic = "SMATMUL_OS", funct7 = 65, bid = 1 },
+  { mnemonic = "SMATMUL_BIAS", funct7 = 17, bid = 1 },
+  { mnemonic = "IM2COL", funct7 = 48, bid = 2 },
+  { mnemonic = "QUANT_F32_TO_I8", funct7 = 51, bid = 3 },
+  { mnemonic = "QUANT_I32_TO_I8", funct7 = 67, bid = 3 },
+  { mnemonic = "INT32_TO_FP32", funct7 = 68, bid = 4 },
+  { mnemonic = "MATADD", funct7 = 72, bid = 5 },
+  { mnemonic = "BDB_COUNTER", funct7 = 4, bid = 6 },
+  { mnemonic = "CLAMP", funct7 = 60, bid = 7 }
+]

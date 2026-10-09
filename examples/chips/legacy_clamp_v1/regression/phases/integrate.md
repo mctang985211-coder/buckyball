@@ -1,0 +1,49 @@
+stage: chip
+phase: integrate
+round: 3
+chip: legacy_clamp_v1
+
+Expected PASS workloads:
+- legacy_clamp_v1-pebble-ctest-transpose_i8_16x16_test-baremetal
+- legacy_clamp_v1-pebble-ctest-transpose_i8_16x32_test-baremetal
+- legacy_clamp_v1-pebble-ctest-transpose_i32_8x16_test-baremetal
+- legacy_clamp_v1-pebble-ctest-transpose_bank_i8_n1_1024x16_test-baremetal
+- legacy_clamp_v1-pebble-ctest-transpose_bank_i8_n2_1024x32_test-baremetal
+- legacy_clamp_v1-pebble-ctest-transpose_bank_i32_n4_1024x16_test-baremetal
+- legacy_clamp_v1-pebble-ctest-smatmul_bias_accumulate_test-baremetal
+- legacy_clamp_v1-pebble-ctest-smatmul_single_block_test-baremetal
+- legacy_clamp_v1-pebble-ctest-im2col_window_test-baremetal
+- legacy_clamp_v1-pebble-ctest-quant_f32_to_i8_test-baremetal
+- legacy_clamp_v1-pebble-ctest-quant_i32_to_i8_test-baremetal
+- legacy_clamp_v1-pebble-ctest-int2fp_tensor_values_test-baremetal
+- legacy_clamp_v1-pebble-ctest-int2fp_tensor_groups_test-baremetal
+- legacy_clamp_v1-pebble-ctest-int2fp_tensor_rows_test-baremetal
+- legacy_clamp_v1-pebble-ctest-int2fp_channel_lanes_test-baremetal
+- legacy_clamp_v1-pebble-ctest-int2fp_channel_base_test-baremetal
+- legacy_clamp_v1-pebble-ctest-int2fp_channel_two_rows_test-baremetal
+- legacy_clamp_v1-pebble-ctest-matadd_test-baremetal
+- legacy_clamp_v1-pebble-ctest-matadd_bank_1024x8_i32_test-baremetal
+- legacy_clamp_v1-pebble-ctest-im2col_matadd_shared_da_test-baremetal
+- legacy_clamp_v1-pebble-ctest-im2col_matadd_shared_da_pipeline_test-baremetal
+- legacy_clamp_v1-pebble-ctest-bdb_counter_test-baremetal
+- legacy_clamp_v1-pebble-ctest-matadd_clamp_test-baremetal
+- legacy_clamp_v1-pebble-mlirtest-ball_transpose_16x16_i8-baremetal
+- legacy_clamp_v1-pebble-mlirtest-bank_transpose_16x16_i8-baremetal
+- legacy_clamp_v1-pebble-mlirtest-ball_smatmul_bias_accumulate-baremetal
+- legacy_clamp_v1-pebble-mlirtest-bank_smatmul_bias_accumulate-baremetal
+- legacy_clamp_v1-pebble-mlirtest-ball_im2col_6x6_k3-baremetal
+- legacy_clamp_v1-pebble-mlirtest-bank_im2col_6x6_k3-baremetal
+- legacy_clamp_v1-pebble-mlirtest-ball_quant_f32_to_i8-baremetal
+- legacy_clamp_v1-pebble-mlirtest-ball_quant_i32_to_i8-baremetal
+- legacy_clamp_v1-pebble-mlirtest-bank_quant_f32_to_i8-baremetal
+- legacy_clamp_v1-pebble-mlirtest-bank_quant_i32_to_i8-baremetal
+- legacy_clamp_v1-pebble-mlirtest-ball_int2fp_4x4-baremetal
+- legacy_clamp_v1-pebble-mlirtest-bank_int2fp_4x4-baremetal
+- legacy_clamp_v1-pebble-mlirtest-ball_int2fp_relu_4x4-baremetal
+- legacy_clamp_v1-pebble-mlirtest-bank_int2fp_relu_4x4-baremetal
+- legacy_clamp_v1-pebble-ctest-clamp_test-baremetal
+- legacy_clamp_v1-pebble-mlirtest-ball_clamp_4x4-baremetal
+- legacy_clamp_v1-pebble-mlirtest-bank_clamp_4x4-baremetal
+- legacy_clamp_v1-pebble-ctest-clamp_capacity_test-baremetal
+
+This round includes all operator slices again. Capacity test is BEMU-only. Negative tests use regression/negative-tests.toml and are judged by nonzero plus specific rejection diagnostic, never fallback failure alone. Static chip audit is recorded in experiment evidence/chip-lead.md.

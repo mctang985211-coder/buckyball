@@ -22,19 +22,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/Dialect)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/Dialect)
 include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR}/Dialect/Buckyball)
 
-set(PEBBLE_BALL_COMPILER_DIALECT_DIRS
-  ${BB_REPO_ROOT}/examples/balls/transpose/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/smatmul/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/im2col/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/toint8/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/int2fp/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/lut/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/maxpool/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/int8add/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/int8mul/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/layernorm/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/silu/compiler/src/Dialect/Buckyball
-)
+# Use the registered Ball dialect paths resolved by the parent Chip.pb generator.
+set(PEBBLE_BALL_COMPILER_DIALECT_DIRS ${BB_BALL_DIALECT_DIRS})
 
 set(BB_CORE_BACKEND_INTRINSICS_DIR
   ${CMAKE_CURRENT_SOURCE_DIR}/Backend/include
@@ -57,6 +46,19 @@ endforeach()
 
 set(BB_BALL_BACKEND_INTRINSICS_DIRS ${BB_BALL_BACKEND_INTRINSICS_DIRS}
   CACHE INTERNAL "Buckyball ball backend intrinsic directories")
+
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" "${BB_TARGET_REGISTRY_GENERATOR}"
+    --repo "${BB_REPO_ROOT}" --chip-pb "${BUCKYBALL_CHIP_PB}"
+    --print-ball-compiler-paths legalize
+  RESULT_VARIABLE BB_PEBBLE_LEGALIZE_RESULT
+  OUTPUT_VARIABLE BB_PEBBLE_LEGALIZE_RAW
+  ERROR_VARIABLE BB_PEBBLE_LEGALIZE_ERROR)
+if(NOT BB_PEBBLE_LEGALIZE_RESULT EQUAL 0)
+  message(FATAL_ERROR "failed to resolve Pebble Ball export sources: ${BB_PEBBLE_LEGALIZE_ERROR}")
+endif()
+string(STRIP "${BB_PEBBLE_LEGALIZE_RAW}" BB_PEBBLE_LEGALIZE_RAW)
+string(REPLACE "\n" ";" BB_legalize_SOURCES "${BB_PEBBLE_LEGALIZE_RAW}")
 
 add_subdirectory(Dialect)
 add_subdirectory(Conversion)

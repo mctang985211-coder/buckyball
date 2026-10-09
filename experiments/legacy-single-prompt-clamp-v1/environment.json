@@ -1,0 +1,20 @@
+{
+  "baseline": "83820af2fc89c681b99233434aa18e7f1739d4a0",
+  "branch": "exp/legacy-single-prompt-clamp-v1-20261009T162503Z",
+  "startedAt": "2026-10-09T16:23:42.356Z",
+  "topology": "one tile / one Pebble instance",
+  "bank": {
+    "count": 24,
+    "widthBits": 128,
+    "lines": 64
+  },
+  "model": {
+    "model": "gpt-6.1-sol",
+    "provider": "openai",
+    "evidence": "session_meta + turn_context"
+  },
+  "isolation": "git worktree from committed baseline; unrelated original modifications preserved",
+  "nixEnvironment": "/nix/store/cbnzkmg1p4wl06ppwdzy8j3jy7i0yrp6-buckyball-environment",
+  "legacyPlugins": "local source snapshot, not a git checkout; executable scripts and prompt snapshots are frozen under .github/scripts/bb-verify",
+  "quota": "one official reset succeeded; further redemption disabled; no purchase"
+}

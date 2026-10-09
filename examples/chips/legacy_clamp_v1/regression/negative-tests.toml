@@ -1,0 +1,51 @@
+# Separate expected-failure manifest. A nonzero exit alone is insufficient.
+# Never feed this to an all-expected-PASS batch command.
+[policy]
+require_nonzero = true
+reject_output = "ERROR: invalid clamp was accepted"
+# RTL diagnostic text and observable allocation/group obligations need verifier audit.
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_lo_gt_hi-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*lo must not exceed hi"
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_zero_n-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*N must be positive"
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_misaligned_n-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*N must be a multiple of 4"
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_over_capacity-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*N exceeds bank capacity"
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_bank_range-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*bank out of range"
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_unallocated-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*not allocated"
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_multigroup-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*must be single group"
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_alias-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*banks must be distinct"
+
+[[negative]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_invalid_reserved-baremetal"
+backend = "bemu"
+require_diagnostic = "clamp:.*reserved BANK1 must be zero"
