@@ -1,0 +1,4 @@
+[workloads]
+search_path = "workloads/src"
+# This experiment uses baremetal operator workloads; no model/pk workload.
+tests = []

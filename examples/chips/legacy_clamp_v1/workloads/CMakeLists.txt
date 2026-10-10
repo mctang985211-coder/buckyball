@@ -1,0 +1,10 @@
+get_filename_component(BUCKYBALL_REPO_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../.. ABSOLUTE)
+set(BUCKYBALL_CTEST_TARGET pebble)
+add_custom_target(legacy_clamp_v1-ctests-build)
+set(BUCKYBALL_CTEST_GROUP_TARGET legacy_clamp_v1-ctests-build)
+add_subdirectory(ctests)
+buckyball_add_ball_workload_subdirs(ctests)
+# Global MLIRTest CMake automatically adds only the configured Balls' MLIR dirs.
+add_custom_target(chip-ctests-build DEPENDS legacy_clamp_v1-ctests-build)
+add_custom_target(chip-mlirtests-build DEPENDS balls-mlir-tests-build)
+add_custom_target(chip-workloads-build ALL DEPENDS chip-ctests-build chip-mlirtests-build)

@@ -1,0 +1,6 @@
+# No selected current fork/main ordinary test is excluded for capacity.
+# Negative runtime/compiler tests are separately judged expected rejections.
+[[exclude]]
+stem = "legacy_clamp_v1-pebble-ctest-clamp_capacity_test-baremetal"
+backends = ["verilator", "p2e"]
+reason = "Full Clamp capacity N=256 is assigned to BEMU; RTL/P2E use clamp_test and the N=64 composition"

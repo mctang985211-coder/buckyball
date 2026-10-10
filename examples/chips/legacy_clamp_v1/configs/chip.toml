@@ -1,0 +1,7 @@
+[designs]
+include = "designs/legacy_clamp_v1.toml"
+
+[sims]
+verilator = "sims.verilator.BuckyballLegacyClampV1VerilatorConfig"
+p2e = "sims.p2e.P2ELegacyClampV1LinuxConfig"
+tapeout = "sims.tapeout.BuckyballLegacyClampV1TapeoutConfig"

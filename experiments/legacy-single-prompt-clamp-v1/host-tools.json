@@ -1,0 +1,71 @@
+{
+  "time": "2026-10-09T16:32:16.091556+00:00",
+  "host": "ROXY",
+  "nix": {
+    "path": "/nix/var/nix/profiles/default/bin/nix",
+    "exit": 0
+  },
+  "gh": {
+    "path": "/usr/bin/gh",
+    "exit": 0
+  },
+  "node": {
+    "path": "/home/ROXY/.local/bin/node",
+    "exit": 0
+  },
+  "pnpm": {
+    "path": "/home/ROXY/bin/pnpm",
+    "exit": 0
+  },
+  "codex": {
+    "path": "/home/ROXY/bin/codex",
+    "exit": 0
+  },
+  "verilator": {
+    "path": "/home/ROXY/code/bb_work/buckyball/result/bin/verilator",
+    "exit": 0
+  },
+  "cmake": {
+    "path": "/home/ROXY/code/bb_work/buckyball/result/bin/cmake",
+    "exit": 0
+  },
+  "cargo": {
+    "path": "/home/ROXY/code/bb_work/buckyball/result/bin/cargo",
+    "exit": 0
+  },
+  "mill": {
+    "path": "/home/ROXY/code/bb_work/buckyball/result/bin/mill",
+    "exit": 0
+  },
+  "dc_shell": {
+    "path": "",
+    "exit": 1
+  },
+  "lc_shell": {
+    "path": "",
+    "exit": 1
+  },
+  "vcs": {
+    "path": "",
+    "exit": 1
+  },
+  "pt_shell": {
+    "path": "",
+    "exit": 1
+  },
+  "env": {
+    "path": "/home/ROXY/code/bb_work/buckyball/result",
+    "exists": true,
+    "resolved": "/nix/store/cbnzkmg1p4wl06ppwdzy8j3jy7i0yrp6-buckyball-environment"
+  },
+  "motia": {
+    "path": "/home/ROXY/bb-verify/buckyball/bbdev/api/.venv/bin/motia",
+    "exists": true,
+    "resolved": "/home/ROXY/bb-verify/buckyball/bbdev/api/.venv/bin/motia"
+  },
+  "spike": {
+    "path": "/home/ROXY/bb-verify/buckyball/bebop/src/nodes/bemu/native/spike/configure.ac",
+    "exists": true,
+    "resolved": "/home/ROXY/bb-verify/buckyball/bebop/src/nodes/bemu/native/spike/configure.ac"
+  }
+}

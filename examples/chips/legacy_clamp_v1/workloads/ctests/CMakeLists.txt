@@ -1,0 +1,1 @@
+add_buckyball_ctests(matadd_clamp_test.c)
