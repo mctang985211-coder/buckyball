@@ -4,7 +4,7 @@
 # optional LLM relay reachable.
 set -euo pipefail
 
-for tool in nix gh pnpm node codex; do
+for tool in nix gh pnpm node; do
   command -v "$tool" >/dev/null || { echo "::error::$tool not on PATH"; exit 1; }
 done
 # Record which node/pnpm the job actually resolves — PATH-order bugs here have
@@ -25,5 +25,10 @@ for path in \
     exit 1; }
 done
 
-codex --version
-codex login status
+: "${BB_VERIFY_CODEX_BIN:?isolated official Codex verifier path required}"
+[ -x "$BB_VERIFY_CODEX_BIN" ] || { echo "::error::Codex verifier binary unavailable"; exit 1; }
+[ -x "$(dirname "$BB_VERIFY_CODEX_BIN")/codex-code-mode-host" ] || {
+  echo "::error::matching official Codex code-mode host unavailable"; exit 1;
+}
+"$BB_VERIFY_CODEX_BIN" --version
+"$BB_VERIFY_CODEX_BIN" login status

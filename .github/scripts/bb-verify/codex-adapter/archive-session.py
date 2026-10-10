@@ -13,6 +13,9 @@ for line in (runner / "codex-verify-events.jsonl").read_text().splitlines():
         pass
 ids = {e.get("thread_id") for e in events if e.get("thread_id")}
 root = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "sessions"
+binary_path = runner / "codex-binary.json"
+binary = json.loads(binary_path.read_text()) if binary_path.is_file() else {}
+versions = set()
 models = set()
 providers = set()
 files = []
@@ -28,6 +31,8 @@ for p in root.rglob("*.jsonl"):
         for line in p.read_text().splitlines():
             o = json.loads(line)
             payload = o.get("payload", {})
+            if o.get("type") == "session_meta" and payload.get("cli_version"):
+                versions.add(payload["cli_version"])
             if o.get("type") == "session_meta" and payload.get("model_provider"):
                 providers.add(payload["model_provider"])
             if o.get("type") == "turn_context" and payload.get("model"):
@@ -38,6 +43,8 @@ for p in root.rglob("*.jsonl"):
         continue
 metadata = {
     "sessionIds": sorted(ids),
+    "binary": binary,
+    "actualCliVersions": sorted(versions),
     "actualModels": sorted(models),
     "actualProviders": sorted(providers),
     "sessionFiles": files,
@@ -48,6 +55,15 @@ metadata = {
 c_api = runner / "c-api-compiler-check"
 if c_api.is_dir():
     shutil.copytree(c_api, dest / "c-api-compiler-check", dirs_exist_ok=True)
-sys.exit(0 if models == {"gpt-6.1-sol"} and providers == {"openai"} else 1)
+if binary_path.is_file():
+    shutil.copy2(binary_path, dest / binary_path.name)
+sys.exit(
+    0
+    if models == {"gpt-6.1-sol"}
+    and providers == {"openai"}
+    and binary.get("accepted") is True
+    and versions == {binary.get("version")}
+    else 1
+)
 
 # C API matrix is optional and source-frozen; archive when explicitly executed.

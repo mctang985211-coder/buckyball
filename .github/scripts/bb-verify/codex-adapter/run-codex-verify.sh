@@ -3,6 +3,34 @@ set -euo pipefail
 : "${BB_VERIFY_ROOT:?}" "${RUNNER_TEMP:?}" "${VERIFY_OUT:?}" "${GITHUB_WORKSPACE:?}"
 ADAPTER=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$VERIFY_OUT"
+# Fail closed before config/build work if the explicitly authorized CLI is unavailable.
+if ! python3 - <<'PYBINARY'
+import os,json,subprocess,hashlib,datetime,re
+from pathlib import Path
+raw=os.environ.get('BB_VERIFY_CODEX_BIN','')
+record={'configuredPath':raw,'time':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+try:
+    binary=Path(raw)
+    if not raw or not binary.is_absolute() or not binary.is_file() or not os.access(binary,os.X_OK):
+        raise RuntimeError('BB_VERIFY_CODEX_BIN must name an executable absolute official CLI path')
+    version=subprocess.run([str(binary),'--version'],capture_output=True,text=True,timeout=30)
+    record.update(resolvedPath=str(binary.resolve()),sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),versionExitCode=version.returncode,versionOutput=version.stdout.strip(),versionStderr=version.stderr)
+    match=re.search(r'codex-cli (\S+)',version.stdout)
+    if version.returncode or not match:
+        raise RuntimeError('official Codex CLI version probe failed')
+    record['version']=match[1]
+    record['accepted']=True
+except Exception as error:
+    record.update(accepted=False,error=str(error))
+finally:
+    (Path(os.environ['RUNNER_TEMP'])/'codex-binary.json').write_text(json.dumps(record,indent=2)+'\n')
+if not record['accepted']:
+    raise SystemExit(1)
+PYBINARY
+then
+  printf 'VERDICT: INFRA\n' > "$VERIFY_OUT/verdict.txt"
+  exit 1
+fi
 PROMPT="$RUNNER_TEMP/codex-verify-prompt.md"
 cat "$ADAPTER/legacy-prompts.md" "$GITHUB_WORKSPACE/task-prompt.md" > "$PROMPT"
 if grep -qE '^[[:space:]]*PRE-FAIL:' "$GITHUB_WORKSPACE/task-prompt.md"; then
@@ -32,13 +60,13 @@ The explicit [ball-subphase-extension] block adds independent old Ball child pla
 Do not edit source, configuration or tracked files. Generated build/log outputs are permitted by the existing legacy CI read-only gate. Do not dispatch, push, consume reset credits or post PR messages. This ref-only channel writes its report through the final answer; the host persists it. Final answer first line must be VERDICT: PASS or VERDICT: FAIL and include head sha: ${RESOLVED_SHA:?}, actual model/provider, UTC times, command/tool identities and terminal exit codes. Never claim formal PASS from tool acceptance or local diagnostics.
 EOF
 export BB_VERIFY_ROOT
-# Use the installed official binary directly; ~/bin/codex is a mutable route wrapper.
+# Use the explicitly frozen official binary; never resolve a mutable route wrapper.
 if [ -r "$HOME/.codex/codex-remote-proxy-env.sh" ]; then
   . "$HOME/.codex/codex-remote-proxy-env.sh"
 fi
 unset OPENAI_API_KEY CODEX_API_KEY DEEPSEEK_API_KEY ALL_PROXY all_proxy
 set +e
-/home/ROXY/.local/bin/codex exec --ignore-user-config -m gpt-6.1-sol -c 'model_provider="openai"' \
+"$BB_VERIFY_CODEX_BIN" exec --ignore-user-config -m gpt-6.1-sol -c 'model_provider="openai"' \
   -c 'approval_policy="never"' -s danger-full-access -C "$BB_VERIFY_ROOT" \
   -c "mcp_servers.bbdev.command=\"$ADAPTER/run-bbdev-mcp.sh\"" \
   -c "mcp_servers.bbdev.env.BB_VERIFY_ROOT=\"$BB_VERIFY_ROOT\"" \
