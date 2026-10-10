@@ -14,6 +14,11 @@ permissions:
 # run blocks reference $VARNAME only. Sole exception: the "Archive verdict
 # artifact" path: strings (YAML cannot reference env) must byte-equal VERIFY_OUT.
 env:
+  # Invocation-scoped proxy: the runner's inherited git.proxy points at an
+  # unavailable endpoint. Applies before checkout without changing host config.
+  GIT_CONFIG_COUNT: '1'
+  GIT_CONFIG_KEY_0: http.proxy
+  GIT_CONFIG_VALUE_0: http://127.0.0.1:17900
   BB_VERIFY_ROOT: /home/ROXY/bb-verify/buckyball                         # persistent root (built once by bootstrap-persistent-root.sh)
   BB_VERIFY_LOCK: /home/ROXY/bb-verify/bb-verify.lock                    # flock file serializing checkout switches on the persistent root
   DSH_DIR: /home/ROXY/code/deepseek-harness                              # local dsh checkout (pnpm dsh)
