@@ -112,6 +112,43 @@ class Admission(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 module.admit(child, None, "slices", REPO)
 
+    def test_exact_frontend_bank_range_rtl_admission(self):
+        case = {
+            "id": "clamp_invalid_bank_range_rtl",
+            "backend": "rtl",
+            "chip": "legacy_clamp_v1",
+            "binary": PREFIX + "ctest-clamp_invalid_bank_range-baremetal",
+            "expectedPattern": "GlobalDecoder: bank0 is outside configured ranges",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            x = extension()
+            x["expectedFailures"] = [case]
+            accepted = run_extension(x, tmp)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            for field, value in [
+                ("id", "clamp_invalid_alias_rtl"),
+                ("backend", "bemu"),
+                ("chip", "pebble"),
+                ("binary", PREFIX + "ctest-clamp_invalid_alias-baremetal"),
+                (
+                    "expectedPattern",
+                    "GlobalDecoder: bank1 is outside configured ranges",
+                ),
+                ("expectedPattern", "GlobalDecoder:.*"),
+            ]:
+                wrong = copy.deepcopy(x)
+                wrong["expectedFailures"][0][field] = value
+                with self.subTest(field=field, value=value):
+                    self.assertNotEqual(run_extension(wrong, tmp).returncode, 0)
+            bemu = copy.deepcopy(x)
+            bemu["expectedFailures"][0].update(
+                id="clamp_invalid_bank_range",
+                backend="bemu",
+                expectedPattern="clamp: input bank out of range",
+            )
+            self.assertEqual(run_extension(bemu, tmp).returncode, 0)
+
     def test_original_skeleton_compatible(self):
         child = extension()["ballSubphase"]
         child.pop("rtlStems")

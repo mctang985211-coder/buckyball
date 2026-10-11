@@ -90,13 +90,23 @@ if child:
             check=True,
         )
         plans.append({"identity": inp, "plan": json.loads(result.stdout)})
+frontend_bank_range_rtl = {
+    "id": "clamp_invalid_bank_range_rtl",
+    "backend": "rtl",
+    "chip": "legacy_clamp_v1",
+    "binary": "legacy_clamp_v1-pebble-ctest-clamp_invalid_bank_range-baremetal",
+    "expectedPattern": "GlobalDecoder: bank0 is outside configured ranges",
+}
 for case in negatives:
     if (
         set(case) != {"id", "backend", "chip", "binary", "expectedPattern"}
         or case["backend"] not in ("bemu", "rtl")
         or case["chip"] != "legacy_clamp_v1"
         or not case["binary"].startswith("legacy_clamp_v1-")
-        or not case["expectedPattern"].startswith("clamp: ")
+        or not (
+            case["expectedPattern"].startswith("clamp: ")
+            or case == frontend_bank_range_rtl
+        )
     ):
         raise ValueError("unsupported expected failure declaration")
     if (child and case["binary"] in child["stems"]) or (
