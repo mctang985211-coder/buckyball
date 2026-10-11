@@ -35,6 +35,12 @@ then
   printf 'VERDICT: INFRA\n' > "$VERIFY_OUT/verdict.txt"
   exit 1
 fi
+# Prove the real service catalog before starting a quota-consuming model session.
+if ! python3 "$ADAPTER/check-mcp-startup.py" > "$RUNNER_TEMP/mcp-startup-preflight.log" 2>&1; then
+  printf 'VERDICT: INFRA\n' > "$VERIFY_OUT/verdict.txt"
+  printf 'VERDICT: INFRA\nhead sha: %s\nRequired MCP capability preflight failed; raw startup evidence: %s/codex-session-evidence/mcp-startup/preflight.json\n' "$RESOLVED_SHA" "$RUNNER_TEMP" > "$VERIFY_OUT/report.md"
+  exit 1
+fi
 PROMPT="$RUNNER_TEMP/codex-verify-prompt.md"
 cat "$ADAPTER/legacy-prompts.md" "$GITHUB_WORKSPACE/task-prompt.md" "$ADAPTER/knowledge-fallback.md" "$ADAPTER/evidence-output-guidance.md" > "$PROMPT"
 if grep -qE '^[[:space:]]*PRE-FAIL:' "$GITHUB_WORKSPACE/task-prompt.md"; then
@@ -72,6 +78,8 @@ unset OPENAI_API_KEY CODEX_API_KEY DEEPSEEK_API_KEY ALL_PROXY all_proxy
 set +e
 "$BB_VERIFY_CODEX_BIN" exec --ignore-user-config -m gpt-6.1-sol -c 'model_provider="openai"' \
   -c 'approval_policy="never"' -s danger-full-access -C "$BB_VERIFY_ROOT" \
+  -c 'mcp_servers.bbdev.required=true' \
+  -c 'mcp_servers.bbdev.startup_timeout_sec=60' \
   -c "mcp_servers.bbdev.command=\"$ADAPTER/run-bbdev-mcp.sh\"" \
   -c "mcp_servers.bbdev.env.BB_VERIFY_ROOT=\"$BB_VERIFY_ROOT\"" \
   -c "mcp_servers.bbdev.env.RUNNER_TEMP=\"$RUNNER_TEMP\"" \

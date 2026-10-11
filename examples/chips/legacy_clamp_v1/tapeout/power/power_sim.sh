@@ -18,7 +18,19 @@ ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
 if [[ -z "${TARGET_LIBRARY:-}" ]]; then
   TARGET_LIBRARY=$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["tapeout"]["target_library"])' "$ROOT/examples/chips/legacy_clamp_v1/tapeout/config.toml")
 fi
-RTL_DIR="$ROOT/arch/build/${CONFIG}"
+# dc.sim writes CONFIG as the chip key, not its tapeout Scala config.
+# Resolve exactly the current bbdev output contract from installed config JSON.
+RTL_DIR=$(python3 - "$ROOT" "${CONFIG:?run.env missing CONFIG chip key}" <<'PY_RTL_DIR'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "bbdev" / "api" / "utils"))
+from path import rtl_dir
+
+print(rtl_dir(str(root), sys.argv[2], "tapeout"))
+PY_RTL_DIR
+)
 MEM_CONF="$RTL_DIR/mems.conf"
 BUILD="$OUTPUT_DIR/gate-vcs"
 mkdir -p "$BUILD"
