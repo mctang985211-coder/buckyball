@@ -5,6 +5,12 @@ import os, sys, subprocess, json, importlib.util
 from pathlib import Path
 
 repo = Path(os.environ["BB_VERIFY_ROOT"])
+runtime_spec = importlib.util.spec_from_file_location(
+    "runtime_closure", Path(__file__).with_name("runtime-closure.py")
+)
+runtime_closure = importlib.util.module_from_spec(runtime_spec)
+runtime_spec.loader.exec_module(runtime_closure)
+runtime_closure.prepare(repo, Path(os.environ["RUNNER_TEMP"]))
 sys.path.insert(0, str(repo / "bbdev/mcp"))
 import common, datetime, re
 
