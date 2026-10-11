@@ -12,7 +12,17 @@ Source authorization: original-prompt-v2.md sections 3–6. All five legacy stag
 
 Independent `examples/cores/pebble/configs/legacy_clamp_v1.toml` uses `balldomains/legacy_clamp_v1.toml`, retaining all other Pebble references and geometry. Exactly eight entries: Transpose=0, SMatMul=1, Im2col=2, ToInt8=3, Int2Fp=4, MatAdd=5, Trace=6, Clamp=7. Trace retains its existing one read/one write wrapper port geometry (its instruction has no bank accesses). Existing funct7 meanings are preserved; BDB_COUNTER=4, CLAMP=60. No default registry changes.
 
-Repository-wide TOML registry/base-ISA inventory is saved as experiment evidence/isa-occupancy.json. Occupied union before this change: 0,1,2,3,4,5,16,17,32,33,34,35,48,49,50,51,53,55,59,64–73,80–87,96–105. In 1read+1write range 48–63, unclaimed values are 52,54,56–58,60–63. Choose 60 as the next increasing legal value after highest occupied value 59 in that access class. Codes >=80 use framework extended/no-bank access and are unsuitable for this operator. Framework-reserved BALL_INIT=5 is checked independently; FENCE=0, BARRIER=1 and memory 16/32/33/35 and analysis-reserved MMIO_SET=34 are preserved.
+The ISA decision has two distinct baselines. Historical investigation base
+`83820af2` (evidence/isa-occupancy.json) had maximum original registered
+one-read/one-write funct7 59, so the contract froze the next legal value 60.
+Actual delivery base `80055d91` (evidence/isa-occupancy-fork-main.json,
+source `a8f7257b`) has maximum original value 55 in that class; 56 would be
+the minimum next increment there. Frozen 60 remains unoccupied, nonreserved,
+within 48–63 and greater than 55, so preserve it without changing any existing
+Ball meaning. Do not interpret the historical inventory as the current main
+inventory. Framework BALL_INIT=5, FENCE=0, BARRIER=1, memory 16/32/33/35
+and analysis-reserved MMIO_SET=34 remain preserved; codes >=80 are unsuitable
+for this operator's one-read/one-write access class.
 
 ## Stable grounding anchors
 

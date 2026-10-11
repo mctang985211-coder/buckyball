@@ -1,6 +1,7 @@
 //===- MegaKernelToBankSSAPatterns.cpp - MegaKernel to bank SSA ----------===//
 
 #include "Conversion/LowerBuckyball/LowerBuckyball.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -53,6 +54,11 @@ public:
       if (!matmul)
         return kernel.emitError(
             "MatMul MegaKernel cannot contain non-MatMul stages");
+#if !PEBBLE_HAS_LUT_BALL
+      if (matmul.getActivation() == 2)
+        return matmul.emitError(
+            "MatMul MegaKernel LUT activation requires registered LutBall");
+#endif
       stages.push_back(matmul);
     }
 
@@ -294,12 +300,18 @@ public:
           ++packedRows;
           if (packedRows == 4 || n0 + kTile >= n) {
             if (lutBank) {
+#if PEBBLE_HAS_LUT_BALL
               Value lutOutput = allocBank(b, loc, 1, 1);
               Value transformed = b.create<BankLutOp>(
                   loc, lutOutput.getType(), packedOutput, lutBank, lutOutput,
                   createI64Const(b, loc, packedRows));
               releaseBank(b, loc, packedOutput);
               packedOutput = transformed;
+#else
+              // Rejected before any rewriting by the stage capability check.
+              llvm_unreachable(
+                  "unregistered LutBall passed MegaKernel validation");
+#endif
             }
             outputs.push_back(packedOutput);
             outputK.push_back(packedRows * kTile);

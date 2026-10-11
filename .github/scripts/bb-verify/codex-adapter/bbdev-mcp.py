@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Same-process bbdev lifecycle plus the unchanged legacy deterministic plan."""
 
-import os, sys, subprocess, json
+import os, sys, subprocess, json, importlib.util
 from pathlib import Path
 
 repo = Path(os.environ["BB_VERIFY_ROOT"])
@@ -16,6 +16,12 @@ def audit(data):
     with AUDIT.open("a") as f:
         f.write(json.dumps(data) + "\n")
 
+
+spec = importlib.util.spec_from_file_location(
+    "status_evidence", Path(__file__).with_name("status-evidence.py")
+)
+status_evidence = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(status_evidence)
 
 original_submit = common.submit
 original_status = common.task_status
@@ -41,7 +47,7 @@ def observed_submit(endpoint, params):
     return result
 
 
-def observed_status(trace_id):
+def observed_status(trace_id, model_view=True):
     result = original_status(trace_id)
     if not result.get("processing", True):
         active.discard(trace_id)
@@ -55,7 +61,10 @@ def observed_status(trace_id):
                 f.seek(task["serverLogOffset"])
                 task["serverLogSlice"] = f.read().decode(errors="replace")
     audit({"event": "status", "trace_id": trace_id, "result": result})
-    return result
+    view = status_evidence.model_status(
+        result, Path(os.environ["RUNNER_TEMP"]) / "codex-session-evidence"
+    )
+    return view if model_view else result
 
 
 common.submit = observed_submit
@@ -87,7 +96,7 @@ def buckyball_expected_failure_check(case_id: str, trace_id: str) -> str:
         or task["params"].get("chip") != case["chip"]
     ):
         raise ValueError("trace is not the declared negative simulation")
-    status = observed_status(trace_id)
+    status = observed_status(trace_id, model_view=False)
     body = status.get("body", {})
     if isinstance(body, dict) and isinstance(body.get("body"), dict):
         body = body["body"]

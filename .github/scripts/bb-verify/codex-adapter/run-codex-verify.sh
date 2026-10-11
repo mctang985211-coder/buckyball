@@ -3,6 +3,10 @@ set -euo pipefail
 : "${BB_VERIFY_ROOT:?}" "${RUNNER_TEMP:?}" "${VERIFY_OUT:?}" "${GITHUB_WORKSPACE:?}"
 ADAPTER=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$VERIFY_OUT"
+# These generated outputs belong only to the current invocation.
+# Prior round evidence is archived independently before another dispatch.
+rm -f -- "$VERIFY_OUT/report.md" "$VERIFY_OUT/codex-final.md" \
+  "$VERIFY_OUT/verdict.txt" "$VERIFY_OUT/codex-execution.json"
 # Fail closed before config/build work if the explicitly authorized CLI is unavailable.
 if ! python3 - <<'PYBINARY'
 import os,json,subprocess,hashlib,datetime,re
@@ -72,7 +76,7 @@ set +e
   -c "mcp_servers.bbdev.env.BB_VERIFY_ROOT=\"$BB_VERIFY_ROOT\"" \
   -c "mcp_servers.bbdev.env.RUNNER_TEMP=\"$RUNNER_TEMP\"" \
   -c "mcp_servers.bbdev.env.RESOLVED_SHA=\"$RESOLVED_SHA\"" \
-  --json -o "$VERIFY_OUT/report.md" - < "$PROMPT" \
+  --json -o "$VERIFY_OUT/codex-final.md" - < "$PROMPT" \
   > "$RUNNER_TEMP/codex-verify-events.jsonl" 2> "$RUNNER_TEMP/codex-verify-stderr.log"
 RC=$?
 python3 "$ADAPTER/archive-session.py"
@@ -88,9 +92,15 @@ python3 - "$VERIFY_OUT" "$RC" <<'PY'
 import sys,json,datetime,os
 from pathlib import Path
 out=Path(sys.argv[1]); rc=int(sys.argv[2])
-p=out/'report.md'; report=p.read_text() if p.exists() else ''
+p=out/'report.md'; final=out/'codex-final.md'
+if not p.exists() and final.exists(): p.write_bytes(final.read_bytes())
+report=p.read_text() if p.exists() else ''
+final_report=final.read_text() if final.exists() else ''
 first=report.splitlines()[0] if report else ''
 v=first.removeprefix('VERDICT: ') if first.startswith('VERDICT: ') else 'INFRA'
+final_first=final_report.splitlines()[0] if final_report else ''
+report_conflict=bool(report and final_report and first != final_first)
+if report_conflict: v='INFRA'
 if v not in ('PASS','FAIL','INFRA') or (v=='PASS' and rc) or rc==97: v='INFRA'
 # Optional C API execution has an independently trusted content/infra verdict.
 # A missing header/toolchain diagnostic must never be relabelled content FAIL.
@@ -99,7 +109,8 @@ if audit_path.is_file():
     capi=[json.loads(line)['result'] for line in audit_path.read_text().splitlines() if json.loads(line).get('event')=='c-api-compiler-check']
     if capi and capi[-1].get('verdict') in ('FAIL','INFRA'):
         v=capi[-1]['verdict']
+if report_conflict or rc==97: v='INFRA'
 (out/'verdict.txt').write_text('VERDICT: '+v+'\n')
-(out/'codex-execution.json').write_text(json.dumps({'requestedModel':'gpt-6.1-sol','requestedProvider':'openai','exitCode':rc,'finishedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'verdict':v},indent=2)+'\n')
+(out/'codex-execution.json').write_text(json.dumps({'requestedModel':'gpt-6.1-sol','requestedProvider':'openai','exitCode':rc,'finishedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'verdict':v,'reportConflict':report_conflict,'finalAnswerFile':'codex-final.md'},indent=2)+'\n')
 sys.exit(0 if v=='PASS' else 1)
 PY

@@ -5,6 +5,10 @@ from pathlib import Path
 runner = Path(os.environ["RUNNER_TEMP"])
 dest = runner / "codex-session-evidence"
 dest.mkdir(exist_ok=True)
+out = Path(os.environ["VERIFY_OUT"])
+for name in ("codex-final.md", "report.md"):
+    if (out / name).is_file():
+        shutil.copy2(out / name, dest / name)
 events = []
 for line in (runner / "codex-verify-events.jsonl").read_text().splitlines():
     try:
