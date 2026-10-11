@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, sys, shutil
+import json, os, sys, shutil, hashlib
 from pathlib import Path
 
 runner = Path(os.environ["RUNNER_TEMP"])
@@ -56,6 +56,22 @@ metadata = {
     "usageNote": "cumulative snapshots; do not sum; deduplicate by session/request",
 }
 (dest / "identity-usage.json").write_text(json.dumps(metadata, indent=2) + "\n")
+raw_checks = dest / "expected-failure-logs"
+raw_checks.mkdir(exist_ok=True)
+raw_log_index = []
+for pattern in ("negative-*.log", "compiler-negative-*.log"):
+    for log in runner.glob(pattern):
+        if log.is_file():
+            target = raw_checks / log.name
+            shutil.copy2(log, target)
+            raw_log_index.append(
+                {
+                    "source": str(log),
+                    "artifactFile": log.name,
+                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                }
+            )
+(raw_checks / "index.json").write_text(json.dumps(raw_log_index, indent=2) + "\n")
 c_api = runner / "c-api-compiler-check"
 if c_api.is_dir():
     shutil.copytree(c_api, dest / "c-api-compiler-check", dirs_exist_ok=True)

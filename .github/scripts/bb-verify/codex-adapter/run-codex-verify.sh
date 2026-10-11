@@ -36,7 +36,7 @@ then
   exit 1
 fi
 PROMPT="$RUNNER_TEMP/codex-verify-prompt.md"
-cat "$ADAPTER/legacy-prompts.md" "$GITHUB_WORKSPACE/task-prompt.md" "$ADAPTER/knowledge-fallback.md" > "$PROMPT"
+cat "$ADAPTER/legacy-prompts.md" "$GITHUB_WORKSPACE/task-prompt.md" "$ADAPTER/knowledge-fallback.md" "$ADAPTER/evidence-output-guidance.md" > "$PROMPT"
 if grep -qE '^[[:space:]]*PRE-FAIL:' "$GITHUB_WORKSPACE/task-prompt.md"; then
   { printf 'VERDICT: FAIL\n'; cat "$GITHUB_WORKSPACE/task-prompt.md"; } > "$VERIFY_OUT/report.md"
   printf 'VERDICT: FAIL\n' > "$VERIFY_OUT/verdict.txt"
