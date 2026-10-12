@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Same-process bbdev lifecycle plus the unchanged legacy deterministic plan."""
 
-import os, sys, subprocess, json, importlib.util
+import os, sys, subprocess, json, importlib.util, uuid
 from pathlib import Path
 
 repo = Path(os.environ["BB_VERIFY_ROOT"])
@@ -33,12 +33,89 @@ original_submit = common.submit
 original_status = common.task_status
 submitted = {}
 active = set()
+phase_spec = importlib.util.spec_from_file_location(
+    "phase_protocol", Path(__file__).with_name("phase-protocol.py")
+)
+phase_protocol = importlib.util.module_from_spec(phase_spec)
+phase_spec.loader.exec_module(phase_protocol)
+prepared_path = Path(os.environ["RUNNER_TEMP"]) / "verification-extension.json"
+protocol = (
+    json.loads(prepared_path.read_text()).get("phaseProtocol")
+    if prepared_path.exists()
+    else None
+)
+phase_rows = []
+phase_binding = None
+phase_complete = False
+if protocol:
+    actual_head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if actual_head != protocol["resolvedSha"]:
+        raise RuntimeError(
+            "phase protocol: actual checkout differs from frozen resolved SHA"
+        )
+    if subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "merge-base",
+            "--is-ancestor",
+            protocol["sourceSha"],
+            actual_head,
+        ],
+        capture_output=True,
+    ).returncode:
+        raise RuntimeError(
+            "phase protocol: frozen source is not an ancestor of actual temp SHA"
+        )
+
+
+def phase_record(row):
+    if protocol:
+        row["phaseBinding"] = phase_binding
+        phase_rows.append(row)
+    audit(row)
+
+
+def bind_phase_service():
+    global phase_binding
+    if not protocol:
+        return
+    port = common._port
+    if phase_binding is None:
+        phase_binding = {"sessionId": str(uuid.uuid4()), "servicePort": port}
+        audit(
+            {
+                "event": "phase-session-start",
+                "binding": phase_binding,
+                "sourceSha": protocol["sourceSha"],
+                "resolvedSha": protocol["resolvedSha"],
+            }
+        )
+    elif phase_binding["servicePort"] != port:
+        raise RuntimeError("phase protocol: native service changed during run")
 
 
 def observed_submit(endpoint, params):
     if active:
         raise RuntimeError("serialize bbdev tasks; an earlier trace is still active")
     common._ensure()
+    bind_phase_service()
+    if protocol and not phase_complete:
+        try:
+            phase_protocol.check_submission(protocol, phase_rows, endpoint, params)
+        except RuntimeError as error:
+            phase_record(
+                {
+                    "event": "phase-submission-rejected",
+                    "endpoint": endpoint,
+                    "params": params,
+                    "error": str(error),
+                }
+            )
+            raise
     log_stat = common.LOG.stat()
     result = original_submit(endpoint, params)
     if result.get("trace_id"):
@@ -49,11 +126,15 @@ def observed_submit(endpoint, params):
             "serverLogInode": log_stat.st_ino,
         }
         active.add(result["trace_id"])
-    audit({"event": "submit", "endpoint": endpoint, "params": params, "result": result})
+    phase_record(
+        {"event": "submit", "endpoint": endpoint, "params": params, "result": result}
+    )
     return result
 
 
 def observed_status(trace_id, model_view=True):
+    if protocol and trace_id not in submitted:
+        raise RuntimeError("phase protocol: status must belong to this service session")
     result = original_status(trace_id)
     if not result.get("processing", True):
         active.discard(trace_id)
@@ -66,7 +147,17 @@ def observed_status(trace_id, model_view=True):
             with common.LOG.open("rb") as f:
                 f.seek(task["serverLogOffset"])
                 task["serverLogSlice"] = f.read().decode(errors="replace")
-    audit({"event": "status", "trace_id": trace_id, "result": result})
+    global phase_complete
+    phase_record({"event": "status", "trace_id": trace_id, "result": result})
+    if protocol and not phase_complete:
+        child_step, bemu_step, rtl_step, completion = phase_protocol.state(
+            protocol, phase_rows
+        )
+        if child_step is None and bemu_step is None and rtl_step is None:
+            phase_complete = True
+            phase_record(
+                {"event": "slices-prerequisite-complete", "completionIndex": completion}
+            )
     view = status_evidence.model_status(
         result, Path(os.environ["RUNNER_TEMP"]) / "codex-session-evidence"
     )

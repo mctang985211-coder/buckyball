@@ -186,6 +186,20 @@ prepared = {
     "backendPlans": backend_plans,
     "childPlans": plans,
 }
+protocol_spec = importlib.util.spec_from_file_location(
+    "phase_protocol", adapter / "phase-protocol.py"
+)
+phase_protocol = importlib.util.module_from_spec(protocol_spec)
+protocol_spec.loader.exec_module(phase_protocol)
+protocol = phase_protocol.prepare(
+    context,
+    prepared,
+    repo,
+    adapter,
+    os.environ.get("RESOLVED_SHA") or context.get("headRefOid"),
+)
+if protocol is not None:
+    prepared["phaseProtocol"] = protocol
 (runner / "verification-extension.json").write_text(
     json.dumps(prepared, indent=2) + "\n"
 )
@@ -198,6 +212,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--gate":
         if (runner / "codex-bbdev-audit.jsonl").exists()
         else []
     )
+    phase_boundary = phase_protocol.verify(protocol, audit) if protocol else -1
     submits = {
         x["result"].get("trace_id"): x
         for x in audit
@@ -241,6 +256,10 @@ if len(sys.argv) > 1 and sys.argv[1] == "--gate":
                 preceding_terminal_index = max(
                     preceding_terminal_index, c_bemu_completion
                 )
+            # Integrate simulations must be new submissions after successful slices.
+            # Shared build evidence can remain reusable in original planner order.
+            if protocol and step["operation"] == "sim" and plan not in plans:
+                preceding_terminal_index = max(preceding_terminal_index, phase_boundary)
             args = shlex.split(step["args"])
             required = {}
             i = 0
