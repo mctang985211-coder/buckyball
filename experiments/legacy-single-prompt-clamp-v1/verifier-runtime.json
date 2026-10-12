@@ -1,0 +1,39 @@
+{
+  "reason": "Official Codex0.155.1 ChatGPT backend rejected gpt-6.1-sol; isolated official0.162.1 accepted same model/provider/account. No additional paid API or account switch.",
+  "release": {
+    "time": "2026-10-10T04:42:41.467027+00:00",
+    "release": "rust-v0.162.1",
+    "archiveSha256": "86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057",
+    "releaseAssetDigestMatched": true,
+    "path": "/home/ROXY/code/bb_work/experiments/legacy-single-prompt-clamp-v1/dependencies/codex-0.162.1/codex-x86_64-unknown-linux-musl",
+    "version": "codex-cli 0.162.1",
+    "exitCode": 0,
+    "globalClientUnchanged": true
+  },
+  "host": {
+    "time": "2026-10-10T04:44:50.384725+00:00",
+    "release": "rust-v0.162.1",
+    "asset": {
+      "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:458239ea45c1fc508d89695f180ab352f2834709a8a46929a4466f4f04399ada",
+      "name": "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+      "size": 27500770
+    },
+    "archiveSha256": "458239ea45c1fc508d89695f180ab352f2834709a8a46929a4466f4f04399ada",
+    "releaseAssetDigestMatched": true,
+    "installedHost": "/home/ROXY/code/bb_work/experiments/legacy-single-prompt-clamp-v1/dependencies/codex-0.162.1/codex-code-mode-host-x86_64-unknown-linux-musl",
+    "siblingExecutableAlias": "/home/ROXY/code/bb_work/experiments/legacy-single-prompt-clamp-v1/dependencies/codex-0.162.1/codex-code-mode-host"
+  },
+  "compatibilityProbe": {
+    "sessionId": "01a1241f-4899-7e10-a225-41a20c12d746",
+    "actualProvider": "openai",
+    "actualModels": [
+      "gpt-6.1-sol"
+    ],
+    "source": "/home/ROXY/.codex/sessions/2026/10/10/rollout-2026-10-10T12-43-14-01a1241f-4899-7e10-a225-41a20c12d746.jsonl",
+    "successfulInference": true
+  },
+  "probeCountsAsFunctionalPass": false,
+  "installer": "install-verifier-runtime.py",
+  "officialModelDocumentation": "https://learn.chatgpt.com/docs/models"
+}

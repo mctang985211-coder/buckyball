@@ -20,8 +20,10 @@ mkdir -p "$(dirname "$BB_VERIFY_LOCK")"
 exec 9>"$BB_VERIFY_LOCK"
 flock 9
 
-git -C "$BB_VERIFY_ROOT" fetch --force origin main
-git -C "$BB_VERIFY_ROOT" fetch --force origin "refs/heads/${REF}"
+# Fetching history must not recursively chase obsolete submodule refs.
+# Align only the verified commit's precise gitlinks in the explicit step below.
+git -C "$BB_VERIFY_ROOT" fetch --recurse-submodules=no --force origin main
+git -C "$BB_VERIFY_ROOT" fetch --recurse-submodules=no --force origin "refs/heads/${REF}"
 git -C "$BB_VERIFY_ROOT" checkout --detach --force FETCH_HEAD
 
 # Realign first-level submodule pointers to the ref head (seconds-long no-ops

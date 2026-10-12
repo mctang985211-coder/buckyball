@@ -1,0 +1,91 @@
+{
+  "timestamp_utc": "2026-10-09T16:36:20.190291+00:00",
+  "scope": "read-only tool version checks and chip-local static adapters; no synthesis/simulation/PPA executed",
+  "model": "gpt-6.1-sol",
+  "provider": "openai",
+  "tools": {
+    "dc_shell": {
+      "wrapper": "/home/ROXY/bb-verify/eda-env/bin/dc_shell",
+      "target": "/data2/tools/syn/R-2020.09-SP5/bin/dc_shell",
+      "probe": "-version",
+      "exit_code": 127,
+      "result": "missing libpng12.so.0; version not obtained"
+    },
+    "vcs": {
+      "wrapper": "/home/ROXY/bb-verify/eda-env/bin/vcs",
+      "target": "/data2/tools/vcs/Q-2020.03-SP2-7/bin/vcs",
+      "probe": "-ID",
+      "exit_code": 0,
+      "result": "script Q-2020.03; unsupported Ubuntu/kernel; vcs1 missing libelf.so.1; driver exit0 not usability PASS"
+    },
+    "lc_shell": {
+      "wrapper": "/home/ROXY/bb-verify/eda-env/bin/lc_shell",
+      "target": "/data2/tools/lc/R-2020.09-SP5/bin/lc_shell",
+      "probe": "-version",
+      "exit_code": 127,
+      "result": "missing libncurses.so.5; version not obtained"
+    },
+    "pt_shell": {
+      "wrapper": null,
+      "target": "/data2/tools/prime/R-2020.09-SP5-5/bin/pt_shell",
+      "probe": "-version",
+      "exit_code": 127,
+      "result": "missing libncurses.so.5; version not obtained"
+    },
+    "lmutil": {
+      "target": "/data2/tools/scl/2021.03/linux64/bin/lmutil",
+      "probe": "lmver self",
+      "exit_code": 0,
+      "version": "FlexNet v11.16.4.0 build252457",
+      "license_checkout": "not attempted; license env unset"
+    }
+  },
+  "libraries": {
+    "smic180_db": "/data2/smic180/SCC018UG_UHD_RVT_V0.4a/SCC018UG_UHD_RVT_V0p4a/liberty/1.8v/scc018ug_uhd_rvt_ss_v1p62_125c_ccs.db",
+    "smic180_verilog": "/data2/smic180/SCC018UG_UHD_RVT_V0.4a/SCC018UG_UHD_RVT_V0p4a/verilog/scc018ug_uhd_rvt.v",
+    "sram_cdk": "/data2/smic180/SRAM/S018SP_v0p1pc_CDK",
+    "synthetic": [
+      "/data2/tools/syn/R-2020.09-SP5/libraries/syn/dw_foundation.sldb",
+      "/data2/tools/syn/R-2020.09-SP5/libraries/syn/standard.sldb"
+    ],
+    "all_paths_exist": true
+  },
+  "env": {
+    "SNPSLMD_LICENSE_FILE": "unset",
+    "LM_LICENSE_FILE": "unset",
+    "EDA_SESSION_BINDS": "unset",
+    "VCS_HOME": "unset before wrapper"
+  },
+  "top": "DigitalTop full chip incl Rocket/Pebble 8-Ball instance",
+  "clock_target_mhz": 100,
+  "clock_period_ns": 10,
+  "constraints": "examples/chips/legacy_clamp_v1/tapeout/area/constraints.sdc",
+  "reports_relative_analysis_dir": {
+    "netlist": "outputs/DigitalTop.v",
+    "hierarchical_ddc": "outputs/DigitalTop.ddc",
+    "actual_sdc": "outputs/DigitalTop.sdc",
+    "area_hierarchy": "reports/area.rpt",
+    "timing_max": "reports/timing_max.rpt",
+    "timing_min": "reports/timing_min.rpt",
+    "violations": "reports/constraint.rpt",
+    "references": "reports/reference.rpt",
+    "gate_log": "activity/gate-vcs/run.log",
+    "activity": "activity/activity.vcd",
+    "measured_window": "activity/activity.vcd.window.tcl",
+    "pt_log": "pt_shell.log",
+    "power_total": "power-reports/power_total.rpt",
+    "power_hierarchy": "power-reports/power_hierarchy.rpt"
+  },
+  "activity": {
+    "source": "same-run full-chip gate VCD, UART BEGIN before bb_clamp and END after completion fence; numerical output checked",
+    "proof_limits": "counter events alone prove neither correct opcode execution nor numerical output. This flow requires nontrivial exact output comparison plus completed fence bracket; bracket includes UART/fence overhead. RTL instruction/event trace and hierarchy/coverage must be corroborated by verifier.",
+    "default_window": null,
+    "no_marker_behavior": "hard fail"
+  },
+  "chip_fixes": [
+    "resolve omitted TARGET_LIBRARY from chip contract in gate adapter",
+    "preserve same-run generated SRAM link_dbs from DC run.tcl in PTPX wrapper",
+    "force GatePowerHarness.dut strip path matching dumped full chip",
+    "measured activity required before PTPX"
+  ]
+}

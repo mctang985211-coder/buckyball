@@ -22,17 +22,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/Dialect)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/Dialect)
 include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR}/Dialect/Buckyball)
 
-set(PEBBLE_BALL_COMPILER_DIALECT_DIRS
-  ${BB_REPO_ROOT}/examples/balls/transpose/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/smatmul/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/im2col/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/toint8/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/int2fp/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/lut/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/maxpool/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/int8add/compiler/src/Dialect/Buckyball
-  ${BB_REPO_ROOT}/examples/balls/int8mul/compiler/src/Dialect/Buckyball
-)
+# The parent compiler resolves these paths from the selected Chip.pb registry.
+# Keep independent domains restricted to their declared Balls.
+set(PEBBLE_BALL_COMPILER_DIALECT_DIRS ${BB_BALL_DIALECT_DIRS})
 
 set(BB_CORE_BACKEND_INTRINSICS_DIR
   ${CMAKE_CURRENT_SOURCE_DIR}/Backend/include

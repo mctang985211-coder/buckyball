@@ -1,0 +1,100 @@
+{
+  "baseline": "80055d91cfe6afafa0ac12af0055cd96007ffb92",
+  "branch": "exp/legacy-single-prompt-clamp-v1-20261009T162503Z",
+  "startedAt": "2026-10-09T16:23:42.356Z",
+  "topology": "one tile / one Pebble instance",
+  "bank": {
+    "count": 24,
+    "widthBits": 128,
+    "lines": 64
+  },
+  "model": {
+    "model": "gpt-6.1-sol",
+    "provider": "openai",
+    "evidence": "session_meta + turn_context"
+  },
+  "isolation": "git worktree from committed baseline; unrelated original modifications preserved",
+  "nixEnvironment": "/nix/store/cbnzkmg1p4wl06ppwdzy8j3jy7i0yrp6-buckyball-environment",
+  "legacyPlugins": "local source snapshot, not a git checkout; executable scripts and prompt snapshots are frozen under .github/scripts/bb-verify",
+  "quota": "one official reset succeeded; further redemption disabled; no purchase",
+  "investigationBaseline": "83820af2fc89c681b99233434aa18e7f1739d4a0",
+  "executionBaseReason": "clean personal-fork main patch with unchanged public contract; new Clamp BEMU API/compiler/regression adapted",
+  "submoduleVersions": [
+    {
+      "path": "bbdev",
+      "sha": "fa287fe2e4e9453605f104fbc022f27ed8d21350",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/bbdev"
+    },
+    {
+      "path": "bebop",
+      "sha": "cbc75ff84da9f80a6319524d3c9e254ae269c929",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/bebop"
+    },
+    {
+      "path": ".agents/skills",
+      "sha": "df200963b04b19b2a75bbcf407ab2c649e8b64ba",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/.agents/skills"
+    },
+    {
+      "path": ".agents/mcps",
+      "sha": "9d198d9ff7f6628c0504605f30b981120902d992",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/.agents/mcps"
+    },
+    {
+      "path": "verify",
+      "sha": "b0c68454ce6121d216eab624807d696263997215",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/verify"
+    },
+    {
+      "path": "compiler/thirdparty/buddy-mlir",
+      "sha": "24778a3ae94dda7ff4482c7598799134c82d9465",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/compiler/thirdparty/buddy-mlir"
+    },
+    {
+      "path": "arch/thirdparty/chipyard",
+      "sha": "0acc1e1de2d3284bcd4d876956932a013ffe1949",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/arch/thirdparty/chipyard"
+    },
+    {
+      "path": "thirdparty/soc-framework",
+      "sha": "02a683f91b0de8a8f1d9fe04ae08de142762881b",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/thirdparty/soc-framework"
+    },
+    {
+      "path": "arch/thirdparty/boom",
+      "sha": "75eaf01d9b392196fb95160036a0aff7a47843bf",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/arch/thirdparty/boom"
+    },
+    {
+      "path": "arch/thirdparty/rocket-chip",
+      "sha": "35488f108c1ee9e42175b5240ae957d8970e9c5b",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/arch/thirdparty/rocket-chip"
+    },
+    {
+      "path": "arch/thirdparty/rocket-chip-inclusive-cache",
+      "sha": "88317ea415459d274026bd59850517a9fcc87ede",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/arch/thirdparty/rocket-chip-inclusive-cache"
+    },
+    {
+      "path": "arch/thirdparty/berkeley-hardfloat",
+      "sha": "536cf3727f655713f424438190100bb08cbf2e5a",
+      "status": "ready",
+      "reference": "/home/ROXY/bb-verify/buckyball/arch/thirdparty/berkeley-hardfloat"
+    }
+  ],
+  "necessaryUntrackedDependencies": {
+    "flake.lock": "actual project-generated lock, nixpkgs1559d3daa3ecc813a650b79375ea61b6741b8746; digest indexed",
+    "result": "existing supported Nix environment symlink; not included in source commit"
+  }
+}

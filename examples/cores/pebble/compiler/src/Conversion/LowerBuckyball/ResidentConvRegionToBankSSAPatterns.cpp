@@ -26,6 +26,12 @@
 using namespace mlir;
 using namespace ::buddy::buckyball;
 
+// Resident lowering uses MaxPool for tile copies, plus the optional fused
+// INT8/LUT stages. Compile this aggregate only when its entire dialect closure
+// is selected; primitive Ball lowering and MatMul MegaKernel remain available.
+#if PEBBLE_HAS_MAXPOOL_BALL && PEBBLE_HAS_INT8ADD_BALL &&                      \
+    PEBBLE_HAS_INT8MUL_BALL && PEBBLE_HAS_LUT_BALL
+
 namespace {
 
 constexpr int64_t kTile = 16;
@@ -3114,3 +3120,31 @@ void populatePebbleResidentConvRegionToBankSSAPatterns(
                                           traceMegaStageLimit);
 }
 } // namespace mlir::buddy
+
+#else
+namespace {
+class UnsupportedResidentConvRegionPattern
+    : public OpRewritePattern<MegaKernelOp> {
+public:
+  using OpRewritePattern<MegaKernelOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(MegaKernelOp kernel,
+                                PatternRewriter &) const override {
+    if (kernel.getBody().empty())
+      return kernel.emitError("MegaKernel region must contain one block");
+    Block &body = kernel.getBody().front();
+    if (body.without_terminator().empty() || isa<MegaMatmulOp>(body.front()))
+      return failure();
+    return kernel.emitError(
+        "resident MegaKernel lowering requires registered MaxPoolBall, "
+        "Int8AddBall, Int8MulBall and LutBall; selected domain lacks "
+        "capabilities");
+  }
+};
+} // namespace
+namespace mlir::buddy {
+void populatePebbleResidentConvRegionToBankSSAPatterns(
+    RewritePatternSet &patterns, bool, int64_t, int64_t) {
+  patterns.add<UnsupportedResidentConvRegionPattern>(patterns.getContext(), 4);
+}
+} // namespace mlir::buddy
+#endif

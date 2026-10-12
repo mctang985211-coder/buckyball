@@ -1,0 +1,387 @@
+{
+  "registries": [
+    {
+      "funct7": 2,
+      "mnemonic": "GEMMINI_CONFIG",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 3,
+      "mnemonic": "GEMMINI_FLUSH",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 53,
+      "mnemonic": "GEMMINI_PRELOAD",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 66,
+      "mnemonic": "GEMMINI_COMPUTE_PRELOADED",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 67,
+      "mnemonic": "GEMMINI_COMPUTE_ACCUMULATED",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 80,
+      "mnemonic": "GEMMINI_LOOP_WS_CONFIG_BOUNDS",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 81,
+      "mnemonic": "GEMMINI_LOOP_WS_CONFIG_ADDR_A",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 82,
+      "mnemonic": "GEMMINI_LOOP_WS_CONFIG_ADDR_B",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 83,
+      "mnemonic": "GEMMINI_LOOP_WS_CONFIG_ADDR_D",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 84,
+      "mnemonic": "GEMMINI_LOOP_WS_CONFIG_ADDR_C",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 85,
+      "mnemonic": "GEMMINI_LOOP_WS_CONFIG_STRIDES_AB",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 86,
+      "mnemonic": "GEMMINI_LOOP_WS_CONFIG_STRIDES_DC",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 87,
+      "mnemonic": "GEMMINI_LOOP_WS",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 96,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_1",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 97,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_2",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 98,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_3",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 99,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_4",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 100,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_5",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 101,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_6",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 102,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_7",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 103,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_8",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 104,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS_CONFIG_9",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 105,
+      "mnemonic": "GEMMINI_LOOP_CONV_WS",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 4,
+      "mnemonic": "BDB_COUNTER",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 55,
+      "mnemonic": "MXFP2INT",
+      "source": "examples/cores/toy/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 65,
+      "mnemonic": "SMATMUL_OS",
+      "source": "examples/cores/goban/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 17,
+      "mnemonic": "SMATMUL_BIAS",
+      "source": "examples/cores/goban/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 51,
+      "mnemonic": "QUANT_F32_TO_I8",
+      "source": "examples/cores/goban/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 67,
+      "mnemonic": "QUANT_I32_TO_I8",
+      "source": "examples/cores/goban/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 68,
+      "mnemonic": "INT32_TO_FP32",
+      "source": "examples/cores/goban/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 49,
+      "mnemonic": "TRANSPOSE",
+      "source": "examples/cores/goban/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 64,
+      "mnemonic": "VECMAT16",
+      "source": "examples/cores/decode/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 51,
+      "mnemonic": "QUANT_F32_TO_I8",
+      "source": "examples/cores/decode/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 67,
+      "mnemonic": "QUANT_I32_TO_I8",
+      "source": "examples/cores/decode/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 68,
+      "mnemonic": "INT32_TO_FP32",
+      "source": "examples/cores/decode/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 49,
+      "mnemonic": "TRANSPOSE",
+      "source": "examples/cores/decode/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 65,
+      "mnemonic": "SMATMUL_OS",
+      "source": "examples/cores/prefill/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 17,
+      "mnemonic": "SMATMUL_BIAS",
+      "source": "examples/cores/prefill/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 51,
+      "mnemonic": "QUANT_F32_TO_I8",
+      "source": "examples/cores/prefill/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 67,
+      "mnemonic": "QUANT_I32_TO_I8",
+      "source": "examples/cores/prefill/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 68,
+      "mnemonic": "INT32_TO_FP32",
+      "source": "examples/cores/prefill/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 49,
+      "mnemonic": "TRANSPOSE",
+      "source": "examples/cores/prefill/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 49,
+      "mnemonic": "TRANSPOSE",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 65,
+      "mnemonic": "SMATMUL_OS",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 17,
+      "mnemonic": "SMATMUL_BIAS",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 48,
+      "mnemonic": "IM2COL",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 51,
+      "mnemonic": "QUANT_F32_TO_I8",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 67,
+      "mnemonic": "QUANT_I32_TO_I8",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 68,
+      "mnemonic": "INT32_TO_FP32",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 66,
+      "mnemonic": "LUT",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 50,
+      "mnemonic": "MAXPOOL",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 69,
+      "mnemonic": "INT8ADD",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 70,
+      "mnemonic": "INT8ADD_RELU",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 71,
+      "mnemonic": "INT8MUL",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 72,
+      "mnemonic": "MATADD",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 73,
+      "mnemonic": "LAYERNORM",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    },
+    {
+      "funct7": 59,
+      "mnemonic": "SILU",
+      "source": "examples/cores/pebble/configs/balldomains/default.toml"
+    }
+  ],
+  "base": [
+    {
+      "funct7": 0,
+      "source": "bb-tests/workloads/lib/bbhw/isa/00_fence.c"
+    },
+    {
+      "funct7": 16,
+      "source": "bb-tests/workloads/lib/bbhw/isa/16_mvout.c"
+    },
+    {
+      "funct7": 1,
+      "source": "bb-tests/workloads/lib/bbhw/isa/01_barrier.c"
+    },
+    {
+      "funct7": 32,
+      "source": "bb-tests/workloads/lib/bbhw/isa/32_mset.c"
+    },
+    {
+      "funct7": 35,
+      "source": "bb-tests/workloads/lib/bbhw/isa/35_mvin_mmio.c"
+    },
+    {
+      "funct7": 33,
+      "source": "bb-tests/workloads/lib/bbhw/isa/33_mvin.c"
+    }
+  ],
+  "framework_reserved": [
+    0,
+    1,
+    5,
+    16,
+    32,
+    33,
+    35,
+    34
+  ],
+  "occupied": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    16,
+    17,
+    32,
+    33,
+    34,
+    35,
+    48,
+    49,
+    50,
+    51,
+    53,
+    55,
+    59,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105
+  ],
+  "legal_1rd1wr_unclaimed": [
+    52,
+    54,
+    56,
+    57,
+    58,
+    60,
+    61,
+    62,
+    63
+  ],
+  "selected": 60,
+  "analysis_reserved_source": "bbdev/api/steps/bebop/bemu/scripts/bemu_analysis.py:ISA (34 mmio_set)"
+}

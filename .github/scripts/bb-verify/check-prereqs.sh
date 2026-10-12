@@ -15,7 +15,7 @@ echo "pnpm at $(command -v pnpm): $(pnpm --version)"
 
 for path in \
   "$DSH_DIR" \
-  "$HARNESS_PKG/ci/settings.ci.yaml" \
+  "$CODEX_VERIFY_ADAPTER/run-codex-verify.sh" \
   "$BB_VERIFY_ROOT/.git" \
   "$BB_VERIFY_ROOT/bbdev/api/.venv/bin/motia" \
   "$BB_VERIFY_ROOT/bebop/src/nodes/bemu/native/spike/configure.ac" ; do
@@ -25,13 +25,10 @@ for path in \
     exit 1; }
 done
 
-[ -n "$DEEPSEEK_API_KEY" ] || {
-  echo "::error::repo secret DEEPSEEK_API_KEY is not configured"; exit 1; }
-
-# Optional local LLM relay (e.g. a UA-rewriting whitelist gate). If configured
-# it must be up before the session starts — probe the TCP port and fail
-# explicitly here instead of letting the dsh session blow up mid-run.
-if [ -n "${RELAY_ADDR:-}" ]; then
-  timeout 3 bash -c "</dev/tcp/${RELAY_ADDR%:*}/${RELAY_ADDR#*:}" || {
-    echo "::error::LLM relay ($RELAY_ADDR) is not reachable"; exit 1; }
-fi
+: "${BB_VERIFY_CODEX_BIN:?isolated official Codex verifier path required}"
+[ -x "$BB_VERIFY_CODEX_BIN" ] || { echo "::error::Codex verifier binary unavailable"; exit 1; }
+[ -x "$(dirname "$BB_VERIFY_CODEX_BIN")/codex-code-mode-host" ] || {
+  echo "::error::matching official Codex code-mode host unavailable"; exit 1;
+}
+"$BB_VERIFY_CODEX_BIN" --version
+"$BB_VERIFY_CODEX_BIN" login status

@@ -17,8 +17,10 @@ env:
   BB_VERIFY_ROOT: /home/ROXY/bb-verify/buckyball                         # persistent root (built once by bootstrap-persistent-root.sh)
   BB_VERIFY_LOCK: /home/ROXY/bb-verify/bb-verify.lock                    # flock file serializing checkout switches on the persistent root
   DSH_DIR: /home/ROXY/code/deepseek-harness                              # local dsh checkout (pnpm dsh)
-  HARNESS_PKG: /home/ROXY/code/bb_work/harness/packages/verify-runner    # local verify-runner checkout (scripts/*.mjs run straight from it)
+  HARNESS_PKG: ${{ github.workspace }}/.github/scripts/bb-verify/legacy-runner    # local verify-runner checkout (scripts/*.mjs run straight from it)
   VERIFY_OUT: /home/ROXY/code/deepseek-harness/.bb-verify-out            # verdict dir (verdict.txt + report.md); must be writable from the dsh sandbox
+  CODEX_VERIFY_ADAPTER: ${{ github.workspace }}/.github/scripts/bb-verify/codex-adapter
+  BB_VERIFY_CODEX_BIN: /home/ROXY/code/bb_work/experiments/legacy-single-prompt-clamp-v1/dependencies/codex-0.162.1/codex-x86_64-unknown-linux-musl # isolated official release; matching sibling code-mode-host required
   RELAY_ADDR: ''                                                         # optional host:port of a local LLM relay; empty = direct connection (tokenrhythm needs none)
   SNPSLMD_LICENSE_FILE: 26000@127.0.0.1                                  # Synopsys license server for dc_shell/vcs/lc_shell (regression.yml pattern)
   LM_LICENSE_FILE: 26000@127.0.0.1                                       # ditto; the fallback Synopsys licensing actually reads
@@ -57,6 +59,12 @@ concurrency:
 jobs:
   verify:
     runs-on: cpu-server
+    # Local proxy exists only on this self-hosted runner, not the hosted backstop.
+    # Invocation scope applies before checkout without changing host git config.
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: http.proxy
+      GIT_CONFIG_VALUE_0: http://127.0.0.1:17900
     # complete layer + EDA lanes (SRAM .lib->.db compile, dc synthesis, UVM)
     # can exceed 3h on this host.
     timeout-minutes: 360
@@ -84,8 +92,6 @@ jobs:
         run: bash .github/scripts/bb-verify/validate-inputs.sh
 
       - name: Check toolchain, local prerequisites and secret
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }} # non-empty check only, never echoed
         run: bash .github/scripts/bb-verify/check-prereqs.sh
 
       - name: Prepare persistent repo (flock + head checkout + incremental submodules)
@@ -119,19 +125,16 @@ jobs:
           PROVISION_EXEMPT: ${{ steps.verdict_inputs.outputs.provision_exempt }}
         run: bash .github/scripts/bb-verify/provision.sh
 
-      - name: Set up dsh (stage plugin, fresh DSH_HOME, headless profile, config)
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }} # written into the fresh DSH_HOME only, never echoed
-        run: bash .github/scripts/bb-verify/setup-dsh.sh
+      - name: Prepare official Codex verifier
+        run: '"$BB_VERIFY_CODEX_BIN" login status'
 
       - name: Snapshot persistent-root diff (read-only gate baseline)
         run: git -C "$BB_VERIFY_ROOT" diff HEAD > "$RUNNER_TEMP/pre-verify.diff"
 
       - name: Run verify-runner
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/bb-verify/run-verify.sh
+        run: bash "$CODEX_VERIFY_ADAPTER/run-codex-verify.sh"
 
       - name: 'Gate: verdict artifacts complete + persistent root untouched'
         run: bash .github/scripts/bb-verify/final-gates.sh
@@ -142,7 +145,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dsh-sessions
-          path: ${{ runner.temp }}/dsh-home/sessions
+          path: |
+            ${{ runner.temp }}/codex-verify-events.jsonl
+            ${{ runner.temp }}/codex-verify-stderr.log
+            ${{ runner.temp }}/codex-session-evidence
+            ${{ runner.temp }}/codex-bbdev-audit.jsonl
+            ${{ runner.temp }}/verification-extension.json
+            ${{ runner.temp }}/extension-gate.log
+            ${{ runner.temp }}/config-install-execution.json
+            ${{ runner.temp }}/config-install.log
 
       # Backstop for earlier red steps that never reached run-verify's verdict
       # gate: guarantee verdict.txt exists (INFRA) — the terminal status step's
